@@ -28,6 +28,7 @@ from src.infrastructure.database import Base
 # 👇 OBRIGATÓRIO: Importar TODOS os models para o Alembic detectar
 # Se não importar aqui, o Alembic não saberá que existem
 from src.infrastructure.models.ticket_orm import TicketORM, CommentORM
+from src.infrastructure.models.user_orm import UserORM
 
 # Configuração de logging
 config = context.config
