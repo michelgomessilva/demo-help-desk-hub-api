@@ -33,6 +33,7 @@ class UserORM(Base):
     role = Column(String(50), default="USER", nullable=False)  # ADMIN, USER, SUPPORT
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.now, nullable=False)
+    telephone = Column(String(20), nullable=True)  # 👈 NOVO CAMPO
 
     def __repr__(self):
         return f"<UserORM(id={self.id}, name={self.name}, email={self.email}, role={self.role})>"
