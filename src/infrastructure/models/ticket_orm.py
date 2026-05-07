@@ -40,6 +40,7 @@ class TicketORM(Base):
     priority = Column(Enum(TicketPriority), default=TicketPriority.MEDIUM, nullable=False)
     category = Column(Enum(TicketCategory), default=TicketCategory.SOFTWARE, nullable=False)
     created_at = Column(DateTime, default=datetime.now, nullable=False)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)  # 👈 NOVO CAMPO    
 
     # Relacionamento
     comments = relationship(
