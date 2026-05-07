@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from src.api.routes import system_routes
 from src.api.routes import ticket_routes
 from src.api.routes import categories_routes
+from src.api.routes import auth_routes
 
 
 def create_app() -> FastAPI:
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(system_routes.router)       # GET /, GET /health
     app.include_router(ticket_routes.router)       # Operações com tickets
     app.include_router(categories_routes.router)   # GET /categories
+    app.include_router(auth_routes.router)         # POST /auth/register, POST /auth/login
 
     return app
 
