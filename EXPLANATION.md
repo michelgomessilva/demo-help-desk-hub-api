@@ -10,12 +10,14 @@ Bem-vindo a este documento! Se nunca viste este projeto, lê isto do início ao 
 2. [O que é um HelpDesk](#o-que-é-um-helpdesk)
 3. [Arquitetura em Camadas](#arquitetura-em-camadas)
 4. [Explicação Ficheiro a Ficheiro](#explicação-ficheiro-a-ficheiro)
-5. [Princípios SOLID Aplicados](#princípios-solid-aplicados)
-6. [DRY — Don't Repeat Yourself](#dry--dont-repeat-yourself)
-7. [Guard Clauses](#guard-clauses)
-8. [Padrão Repository](#padrão-repository)
-9. [Fluxo de Uma Requisição](#fluxo-de-uma-requisição)
-10. [Como Evoluir o Projeto](#como-evoluir-o-projeto)
+5. [Modelos ORM e Base de Dados](#modelos-orm-e-base-de-dados)
+6. [Alembic — Migrações de Banco de Dados](#alembic--migrações-de-banco-de-dados)
+7. [Princípios SOLID Aplicados](#princípios-solid-aplicados)
+8. [DRY — Don't Repeat Yourself](#dry--dont-repeat-yourself)
+9. [Guard Clauses](#guard-clauses)
+10. [Padrão Repository](#padrão-repository)
+11. [Fluxo de Uma Requisição](#fluxo-de-uma-requisição)
+12. [Como Evoluir o Projeto](#como-evoluir-o-projeto)
 
 ---
 
@@ -537,6 +539,389 @@ app = create_app()
 
 ---
 
+## Modelos ORM e Base de Dados
+
+### O que é ORM?
+
+**ORM** = Object-Relational Mapping. É uma técnica para converter entre dados relacionais (tabelas SQL) e objetos Python.
+
+```
+Banco de Dados (SQL)
+    ↓
+Converter ↔ (ORM)
+    ↓
+Código Python (Classes)
+```
+
+### Por que ORM separado de Domain Models?
+
+**Domain Model** (`Ticket`, `Comment`)
+- Puro, sem conhecimento de banco
+- Foca em lógica de negócio
+- Usa `@dataclass`
+- Pode ter qualquer estrutura
+
+**ORM Model** (`TicketORM`, `CommentORM`)
+- Conhece de SQL e persistência
+- Herda de SQLAlchemy `Base`
+- Define colunas e tipos SQL
+- Define relacionamentos
+
+**Benefício:** Trocar banco de dados não afeta a lógica!
+
+```python
+# Domain (puro)
+@dataclass
+class Ticket:
+    id: int
+    title: str
+    comments: list[Comment]
+
+# ORM (específico do banco)
+class TicketORM(Base):
+    __tablename__ = "tickets"
+    id = Column(Integer, primary_key=True)
+    title = Column(String(200))
+    comments = relationship("CommentORM")  # ← Específico do banco!
+```
+
+### `src/infrastructure/database.py` — Configuração SQLAlchemy
+
+**O que é?**
+Centraliza a configuração da base de dados.
+
+```python
+# Carregar variáveis de .env
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Criar conexão com o banco
+engine = create_engine(DATABASE_URL)
+
+# Factory para criar sessões
+SessionLocal = sessionmaker(bind=engine)
+
+# Classe base para todos os models ORM
+class Base(DeclarativeBase):
+    pass
+```
+
+**Por que?**
+- Um único lugar para configurar o banco
+- Reutilizável em rotas, migrations, testes
+- Fácil de alterar (mudar URL, adicionar logging, etc.)
+
+---
+
+### `src/infrastructure/models/ticket_orm.py` — Modelos ORM
+
+**O que é?**
+Define como os Tickets e Comments são armazenados no banco de dados.
+
+```python
+class TicketORM(Base):
+    __tablename__ = "tickets"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(200), nullable=False)
+    description = Column(String(5000), nullable=False)
+    status = Column(Enum(TicketStatus), default=TicketStatus.OPEN)
+    priority = Column(Enum(TicketPriority), default=TicketPriority.MEDIUM)
+    category = Column(Enum(TicketCategory), default=TicketCategory.SOFTWARE)
+    created_at = Column(DateTime, default=datetime.now)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Relacionamento: um ticket tem muitos comentários
+    comments = relationship(
+        "CommentORM",
+        back_populates="ticket",
+        cascade="all, delete-orphan",  # Deleta comentários quando ticket é deletado
+        lazy="joined"  # Carrega comentários automaticamente
+    )
+```
+
+**Características importantes:**
+
+| Recurso | O que faz | Exemplo |
+|---------|-----------|---------|
+| `Column` | Define uma coluna no banco | `Column(String(200))` |
+| `primary_key=True` | Chave primária (ID único) | `id = Column(Integer, primary_key=True)` |
+| `nullable=False` | Campo obrigatório | `title = Column(String(200), nullable=False)` |
+| `default=` | Valor padrão | `status = Column(Enum(TicketStatus), default=TicketStatus.OPEN)` |
+| `ForeignKey()` | Referencia outra tabela | `assigned_to = Column(Integer, ForeignKey("users.id"))` |
+| `Enum` | Usa enums Python como tipo SQL | `status = Column(Enum(TicketStatus))` |
+| `relationship()` | Relacionamento ORM | `comments = relationship("CommentORM")` |
+| `cascade="all, delete-orphan"` | Deleta relacionados | Deletar ticket deleta comentários |
+| `lazy="joined"` | Carrega dados relacionados | Carrega comentários com o ticket |
+
+**Conversão Domain ↔ ORM:**
+
+```python
+# De ORM para Domain (quando vem do banco)
+def orm_to_domain(ticket_orm: TicketORM) -> Ticket:
+    return Ticket(
+        id=ticket_orm.id,
+        title=ticket_orm.title,
+        description=ticket_orm.description,
+        status=ticket_orm.status,
+        priority=ticket_orm.priority,
+        category=ticket_orm.category,
+        created_at=ticket_orm.created_at,
+        comments=[
+            Comment(id=c.id, content=c.content)
+            for c in ticket_orm.comments
+        ]
+    )
+
+# De Domain para ORM (quando vai para o banco)
+def domain_to_orm(ticket: Ticket) -> TicketORM:
+    return TicketORM(
+        id=ticket.id,
+        title=ticket.title,
+        description=ticket.description,
+        status=ticket.status,
+        priority=ticket.priority,
+        category=ticket.category,
+        created_at=ticket.created_at
+    )
+```
+
+---
+
+### `src/infrastructure/models/user_orm.py` — Modelo User
+
+**O que é?**
+Define o utilizador no banco de dados.
+
+```python
+class UserORM(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(50), default="USER")  # ADMIN, USER, SUPPORT
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    telephone = Column(String(20), nullable=True)  # Campo opcional
+```
+
+**Campos importantes:**
+- `email` — único, não pode repetir
+- `password_hash` — NUNCA armazenar a senha! Hash sempre
+- `role` — define permissões (ADMIN, USER, SUPPORT)
+- `is_active` — soft delete (marca como inativo em vez de apagar)
+- `telephone` — opcional, pode ser NULL
+
+---
+
+## Alembic — Migrações de Banco de Dados
+
+### O que é Alembic?
+
+Alembic é uma ferramenta que **controla versões do schema do banco de dados**.
+
+**Problema sem migrations:**
+```python
+# Versão 1 (Semana 2)
+Base.metadata.create_all(engine)  # Cria tabelas
+
+# Versão 2 (Semana 3)
+# Como adicionar coluna "telephone" em users?
+# Editar o model... e depois?
+# O banco não sabe que mudou! Código fica fora de sync com banco.
+```
+
+**Solução com Alembic:**
+```bash
+# 1. Modificar o model ORM
+# class UserORM:
+#     telephone = Column(String(20))
+
+# 2. Gerar migration automática
+alembic revision --autogenerate -m "Add telephone to users"
+
+# 3. Revisar a migration
+# alembic/versions/xxx_add_telephone_to_users.py
+
+# 4. Aplicar ao banco
+alembic upgrade head
+
+# ✅ Banco está sincronizado com código!
+```
+
+### Como funciona Alembic
+
+```
+migrations/
+├── env.py                    ← Configuração do Alembic
+├── script.py.mako           ← Template para novas migrations
+├── alembic.ini              ← Arquivo de configuração
+└── versions/
+    ├── 1542ad98c7c7_create_initial_schema...py
+    ├── 59b2b3227eb5_create_users_table.py
+    ├── 05d6a98dc1c6_add_telephone_field_to_users.py
+    └── 69b887a5d772_add_assigned_to_field_to_tickets.py
+```
+
+**Cada migration é um arquivo Python:**
+
+```python
+# migrations/versions/xxx_add_telephone_to_users.py
+
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade():
+    """Aplicar a mudança (para frente)."""
+    op.add_column('users', sa.Column('telephone', sa.String(20), nullable=True))
+
+def downgrade():
+    """Reverter a mudança (para trás)."""
+    op.drop_column('users', 'telephone')
+```
+
+### `migrations/env.py` — Configuração
+
+Este é o ficheiro mais importante do Alembic.
+
+```python
+# 1. Adicionar src ao path Python
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# 2. Carregar .env
+load_dotenv()
+
+# 3. Importar a Base (OBRIGATÓRIO!)
+from src.infrastructure.database import Base
+
+# 4. Importar TODOS os models ORM
+from src.infrastructure.models.ticket_orm import TicketORM, CommentORM
+from src.infrastructure.models.user_orm import UserORM
+
+# 5. Dizer ao Alembic que estes são os models
+target_metadata = Base.metadata
+```
+
+**Por que importar todos os models?**
+Se não importar, Alembic não saberá que existem e não as detectará em `--autogenerate`.
+
+### Usar Alembic
+
+**1. Gerar migration (automática):**
+```bash
+alembic revision --autogenerate -m "Add telephone to users"
+```
+
+Isto **compara** o banco com os models e cria a migration.
+
+**2. Revisar a migration:**
+```bash
+cat migrations/versions/xxx_add_telephone_to_users.py
+```
+
+Verificar se está correto antes de aplicar.
+
+**3. Aplicar ao banco:**
+```bash
+alembic upgrade head
+```
+
+Executa todas as migrations até à versão mais recente.
+
+**4. Ver histórico:**
+```bash
+alembic history
+```
+
+Mostra todas as migrations aplicadas.
+
+**5. Reverter última migration:**
+```bash
+alembic downgrade -1
+```
+
+**6. Ir para uma versão específica:**
+```bash
+alembic upgrade 1542ad98c7c7
+```
+
+### Migrations neste projeto
+
+Este projeto tem 4 migrations:
+
+1. **`1542ad98c7c7_create_initial_schema_with_tickets_and_comments.py`**
+   - Cria tabelas `tickets` e `comments`
+   - Define colunas básicas
+   - Define relacionamentos
+
+2. **`59b2b3227eb5_create_users_table.py`**
+   - Cria tabela `users`
+   - Define campos: id, name, email, password_hash, role, is_active, created_at
+
+3. **`05d6a98dc1c6_add_telephone_field_to_users.py`**
+   - Adiciona coluna `telephone` em users
+   - Campo opcional (nullable=True)
+
+4. **`69b887a5d772_add_assigned_to_field_to_tickets_with_foreign_key.py`**
+   - Adiciona coluna `assigned_to` em tickets
+   - Foreign key para users.id
+   - Permite atribuir tickets a utilizadores
+
+### Fluxo: Adicionar nova coluna
+
+Vamos dizer que quer adicionar `priority_level` em users:
+
+**Passo 1: Modificar o model ORM**
+```python
+# src/infrastructure/models/user_orm.py
+class UserORM(Base):
+    # ... colunas existentes ...
+    priority_level = Column(Integer, default=5, nullable=False)  # ← NOVA
+```
+
+**Passo 2: Gerar migration**
+```bash
+alembic revision --autogenerate -m "Add priority_level to users"
+```
+
+Cria `migrations/versions/xxx_add_priority_level_to_users.py`
+
+**Passo 3: Revisar**
+```python
+# migrations/versions/xxx_add_priority_level_to_users.py
+def upgrade():
+    op.add_column('users', sa.Column('priority_level', sa.Integer(), server_default='5', nullable=False))
+
+def downgrade():
+    op.drop_column('users', 'priority_level')
+```
+
+**Passo 4: Aplicar**
+```bash
+alembic upgrade head
+```
+
+✅ Banco sincronizado!
+
+### Variáveis de ambiente
+
+Alembic lê `DATABASE_URL` do `.env`:
+
+```bash
+# .env
+DATABASE_URL=postgresql://user:password@localhost:5432/helpdesk_db
+ENVIRONMENT=development
+```
+
+Depois no código:
+```python
+# migrations/env.py
+url = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+```
+
+---
+
 ## Princípios SOLID Aplicados
 
 SOLID é um acrónimo para 5 princípios de design. Vamos ver como estão aplicados:
@@ -1017,40 +1402,80 @@ Já está implementado! A arquitetura suporta:
 
 Não precisa de mudança arquitetónica.
 
-### Passo 2: Semana 4 — Trocar para PostgreSQL
+### Passo 2: Semana 4 — PostgreSQL com Alembic ✅ (Já Implementado!)
 
-**O que mudar:**
-1. Criar `src/infrastructure/database.py` — Configuração SQLAlchemy
-2. Criar `src/infrastructure/models/ticket_orm.py` — Models ORM
-3. Criar `src/infrastructure/repositories/sqlalchemy_ticket_repository.py`
-4. Mudar 1 linha em `ticket_routes.py`:
+**Status:** ✅ Já está feito! Este projeto tem:
+
+✅ **Alembic configurado** — `alembic.ini` + `migrations/`
+✅ **Modelos ORM** — `ticket_orm.py`, `comment_orm.py`, `user_orm.py`
+✅ **Base de dados** — `src/infrastructure/database.py` com SQLAlchemy
+✅ **Migrations** — 4 migrations já criadas:
+   - Criar tabelas iniciais (tickets, comments)
+   - Criar tabela users
+   - Adicionar coluna telephone em users
+   - Adicionar coluna assigned_to em tickets
+
+**Como usar o PostgreSQL:**
+
+1. **Instalar PostgreSQL:**
+   ```bash
+   # macOS
+   brew install postgresql@15
+   
+   # Linux
+   sudo apt install postgresql
+   
+   # Windows
+   # Descarregar de https://www.postgresql.org/download/windows/
+   ```
+
+2. **Criar database:**
+   ```bash
+   createdb helpdesk_db
+   ```
+
+3. **Configurar variáveis de ambiente:**
+   ```bash
+   # .env
+   DATABASE_URL=postgresql://localhost:5432/helpdesk_db
+   ENVIRONMENT=development
+   ```
+
+4. **Aplicar migrations:**
+   ```bash
+   alembic upgrade head
+   ```
+
+5. **Trocar para SQLAlchemy repository:**
    ```python
-   # Antes
-   _repository = InMemoryTicketRepository()
-
-   # Depois
+   # src/api/routes/ticket_routes.py
+   from src.infrastructure.database import SessionLocal
+   from src.infrastructure.repositories.sqlalchemy_ticket_repository import SQLAlchemyTicketRepository
+   
    _repository = SQLAlchemyTicketRepository(SessionLocal())
    ```
 
-**Estrutura SQL:**
-```sql
-CREATE TABLE tickets (
-    id SERIAL PRIMARY KEY,
-    title VARCHAR(200) NOT NULL,
-    description TEXT NOT NULL,
-    status VARCHAR(20) NOT NULL,
-    priority VARCHAR(20) NOT NULL,
-    category VARCHAR(20) NOT NULL,
-    created_at TIMESTAMP NOT NULL
-);
+**Como adicionar nova coluna:**
 
-CREATE TABLE comments (
-    id SERIAL PRIMARY KEY,
-    ticket_id INTEGER NOT NULL REFERENCES tickets(id),
-    content TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL
-);
-```
+1. Editar o model ORM:
+   ```python
+   # src/infrastructure/models/ticket_orm.py
+   class TicketORM(Base):
+       # ... campos existentes ...
+       new_field = Column(String(100), nullable=True)  # ← NOVA COLUNA
+   ```
+
+2. Gerar migration:
+   ```bash
+   alembic revision --autogenerate -m "Add new_field to tickets"
+   ```
+
+3. Revisar `migrations/versions/xxx_add_new_field_to_tickets.py`
+
+4. Aplicar:
+   ```bash
+   alembic upgrade head
+   ```
 
 ### Passo 3: Autenticação — Saber quem fez o quê
 

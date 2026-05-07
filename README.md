@@ -66,6 +66,24 @@ cp .env.example .env
 # DATABASE_URL=postgresql://helpdesk_user:helpdesk_password@localhost:5432/helpdesk_db
 ```
 
+#### Aplicar migrations com Alembic
+
+```bash
+# Aplicar todas as migrations até à versão mais recente
+alembic upgrade head
+
+# Ver histórico de migrations aplicadas
+alembic history
+
+# Ver status atual
+alembic current
+```
+
+Isto criará as tabelas:
+- `tickets` — com colunas: id, title, description, status, priority, category, created_at, assigned_to
+- `comments` — com colunas: id, ticket_id, content, created_at
+- `users` — com colunas: id, name, email, password_hash, role, is_active, created_at, telephone
+
 #### Trocar para SQLAlchemy
 
 Edita `src/api/routes/ticket_routes.py` e descomenta a secção **"SEMANA 4 - TROCAR REPOSITÓRIO"**:
@@ -86,6 +104,8 @@ _repository = SQLAlchemyTicketRepository(SessionLocal())
 ```bash
 PYTHONPATH=src uvicorn src.main:app --reload
 ```
+
+Abre [http://localhost:8000/docs](http://localhost:8000/docs) e testa os endpoints!
 
 ## 📡 Endpoints principais
 
@@ -141,34 +161,45 @@ PYTHONPATH=src uvicorn src.main:app --reload
 ## 📁 Estrutura do projeto
 
 ```
-src/
-├── main.py                               ← Ponto de entrada
-├── api/
-│   ├── routes/                           ← Apenas endpoints HTTP
-│   │   ├── system_routes.py
-│   │   ├── ticket_routes.py
-│   │   └── categories_routes.py
-│   └── schemas/                          ← Apenas validação Pydantic
-│       ├── requests/
-│       └── responses/
-├── application/
-│   └── ticket_service.py                 ← Lógica de negócio
-├── domain/
-│   └── tickets/
-│       ├── enums.py                      ← Enumerações de domínio
-│       ├── models.py                     ← Dataclasses puras
-│       ├── exceptions.py                 ← Exceções de negócio
-│       └── repositories.py               ← Interface (contrato)
-└── infrastructure/
-    ├── di/                               ← 🎯 Injeção de dependências
-    │   ├── __init__.py
-    │   └── dependencies.py               ← Dependências do FastAPI
-    ├── database.py                       ← Configuração SQLAlchemy
-    ├── models/
-    │   └── ticket_orm.py                 ← Models ORM
-    └── repositories/
-        ├── in_memory_ticket_repository.py
-        └── sqlalchemy_ticket_repository.py
+.
+├── alembic.ini                           ← Configuração do Alembic
+├── migrations/                           ← 🎯 Migrações de banco de dados
+│   ├── env.py                            ← Configuração do Alembic
+│   ├── script.py.mako                    ← Template de migration
+│   └── versions/                         ← Histórico de mudanças
+│       ├── 1542ad98c7c7_create_initial_schema.py
+│       ├── 59b2b3227eb5_create_users_table.py
+│       ├── 05d6a98dc1c6_add_telephone_field_to_users.py
+│       └── 69b887a5d772_add_assigned_to_field_to_tickets.py
+├── src/
+│   ├── main.py                           ← Ponto de entrada
+│   ├── api/
+│   │   ├── routes/                       ← Apenas endpoints HTTP
+│   │   │   ├── system_routes.py
+│   │   │   ├── ticket_routes.py
+│   │   │   └── categories_routes.py
+│   │   └── schemas/                      ← Apenas validação Pydantic
+│   │       ├── requests/
+│   │       └── responses/
+│   ├── application/
+│   │   └── ticket_service.py             ← Lógica de negócio
+│   ├── domain/
+│   │   └── tickets/
+│   │       ├── enums.py                  ← Enumerações de domínio
+│   │       ├── models.py                 ← Dataclasses puras
+│   │       ├── exceptions.py             ← Exceções de negócio
+│   │       └── repositories.py           ← Interface (contrato)
+│   └── infrastructure/
+│       ├── di/                           ← 🎯 Injeção de dependências
+│       │   ├── __init__.py
+│       │   └── dependencies.py           ← Dependências do FastAPI
+│       ├── database.py                   ← Configuração SQLAlchemy
+│       ├── models/
+│       │   ├── ticket_orm.py             ← Models ORM (Tickets, Comments)
+│       │   └── user_orm.py               ← Model ORM (Users)
+│       └── repositories/
+│           ├── in_memory_ticket_repository.py
+│           └── sqlalchemy_ticket_repository.py
 ```
 
 ## 🎓 Conceitos-chave
@@ -197,6 +228,48 @@ Isto permite:
 - Conversões centralizadas entre modelos
 - Validações reutilizáveis com Pydantic
 
+### Alembic — Versionamento de Schema
+
+O projeto usa **Alembic** para controlar as mudanças ao schema da base de dados.
+
+**Por que Alembic?**
+- ✅ Controlo de versão do banco (como git, mas para SQL)
+- ✅ Rastrear quem mudou o quê e quando
+- ✅ Fácil para revert (undo) de mudanças
+- ✅ Geração automática de migrations
+
+**Como adicionar uma coluna nova:**
+
+1. Editar o model ORM:
+```python
+# src/infrastructure/models/ticket_orm.py
+class TicketORM(Base):
+    # ... campos existentes ...
+    severity = Column(String(50), nullable=True)  # ← NOVA COLUNA
+```
+
+2. Gerar migration automática:
+```bash
+alembic revision --autogenerate -m "Add severity field to tickets"
+```
+
+3. Verificar `migrations/versions/xxx_add_severity_field_to_tickets.py`
+
+4. Aplicar ao banco:
+```bash
+alembic upgrade head
+```
+
+**Comandos úteis:**
+```bash
+alembic current              # Ver versão atual
+alembic history              # Ver histórico
+alembic downgrade -1         # Reverter última mudança
+alembic upgrade <revision>   # Ir para versão específica
+```
+
+Lê **[EXPLANATION.md — Alembic](./EXPLANATION.md#alembic--migrações-de-banco-de-dados)** para explicação completa.
+
 ## 📚 Documentação completa
 
 Lê **[EXPLANATION.md](./EXPLANATION.md)** (40-50 min) para:
@@ -210,26 +283,30 @@ Lê **[EXPLANATION.md](./EXPLANATION.md)** (40-50 min) para:
 
 Depois de compreender a arquitetura atual, evolui o projeto com:
 
-1. **Autenticação (JWT)**
-   - Adicionar tabela de users
-   - Endpoint de login
+1. **✅ Alembic — Migrações de Banco de Dados (Já Implementado!)**
+   - ✅ Alembic configurado (`alembic.ini` + `migrations/`)
+   - ✅ 4 migrations criadas (schemas, users, telephone, assigned_to)
+   - ✅ ORM models definidos (TicketORM, CommentORM, UserORM)
+   - Próximo: Implementar SQLAlchemyTicketRepository completo e trocar repositório
+
+2. **Autenticação (JWT)**
+   - Tabela de users já existe (UserORM)
+   - Implementar endpoint de login
    - Middleware de autenticação
+   - Hash de senhas (bcrypt)
 
-2. **Testes**
+3. **Testes**
    - Unit tests (mockar repositório)
-   - Integration tests (testar com BD)
+   - Integration tests (testar com BD real)
    - E2E tests (testar fluxo completo)
-
-3. **Migrations com Alembic**
-   - Melhor que `Base.metadata.create_all()`
-   - Controle de versão do schema
 
 4. **Docker + CI/CD**
    - Dockerfile para containerização
+   - docker-compose.yml para PostgreSQL + API
    - GitHub Actions para testes automáticos
    - Deploy automático
 
-Vê **EXPLANATION.md** para um guia detalhado de cada passo.
+Vê **EXPLANATION.md** para um guia detalhado de cada passo (especialmente as seções sobre [Alembic](#alembic--migrações-de-banco-de-dados) e [Como Evoluir o Projeto](#como-evoluir-o-projeto)).
 
 ## 🧪 Exemplos de uso
 
