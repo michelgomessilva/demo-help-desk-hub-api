@@ -18,13 +18,13 @@ Inversão de Controle: o service é injetado aqui (não criado dentro das funç�
 Isto permite mockar o service em testes e trocar implementações facilmente.
 """
 
-
-from sqlalchemy.orm import Session
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Security
 from src.application.ticket_service import TicketService
 from src.domain.tickets.exceptions import TicketNotFoundError
 from src.domain.tickets.enums import TicketStatus, TicketPriority, TicketCategory
 from src.infrastructure.di.dependencies import get_service
+from src.infrastructure.di.auth_dependencies import get_current_user, require_admin
+from src.infrastructure.models.user_orm import UserORM
 from src.api.schemas.requests.ticket_request import (
     CreateTicketRequest,
     UpdateTicketRequest,
@@ -33,10 +33,6 @@ from src.api.schemas.requests.ticket_request import (
 from src.api.schemas.responses.ticket_response import TicketResponse
 from src.api.schemas.responses.comment_response import CommentResponse
 from src.api.schemas.responses.paginated_response import PaginatedResponse
-from src.infrastructure.di.auth_dependencies import get_current_user, require_admin
-from src.infrastructure.models.user_orm import UserORM
-from src.infrastructure.models.ticket_orm import TicketORM
-from src.infrastructure.database import get_db_session
 
 # Criar o router para estas rotas
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
@@ -46,7 +42,7 @@ router = APIRouter(prefix="/tickets", tags=["Tickets"])
 def create_ticket(
     request: CreateTicketRequest,
     service: TicketService = Depends(get_service),
-    current_user: UserORM = Depends(get_current_user)
+    current_user: UserORM = Security(get_current_user),
 ) -> TicketResponse:
     """
     Criar um novo ticket.
@@ -68,9 +64,6 @@ def create_ticket(
     Retorna:
         TicketResponse (status 201 Created)
     """
-
-    print(f"User {current_user.name} ({current_user.id}) listou tickets")
-
     ticket = service.create_ticket(
         title=request.title,
         description=request.description,
@@ -89,7 +82,7 @@ def list_tickets(
     page: int = 1,
     size: int = 10,
     service: TicketService = Depends(get_service),
-    current_user: UserORM = Depends(get_current_user)
+    current_user: UserORM = Security(require_admin),
 ) -> PaginatedResponse[TicketResponse]:
     """
     Listar tickets com filtros opcionais e paginação.
@@ -114,8 +107,6 @@ def list_tickets(
         - size: items por página
         - pages: número total de páginas
     """
-
-    print(f"User {current_user.name} ({current_user.id}) listou tickets")
     tickets, total = service.list_tickets(
         status=status,
         priority=priority,
@@ -137,6 +128,7 @@ def list_tickets(
 def get_ticket(
     ticket_id: int,
     service: TicketService = Depends(get_service),
+    current_user: UserORM = Security(get_current_user),
 ) -> TicketResponse:
     """
     Obter um ticket específico pelo ID.
@@ -165,6 +157,7 @@ def update_ticket(
     ticket_id: int,
     request: UpdateTicketRequest,
     service: TicketService = Depends(get_service),
+    current_user: UserORM = Security(get_current_user),
 ) -> TicketResponse:
     """
     Atualizar um ticket existente.
@@ -212,6 +205,7 @@ def add_comment(
     ticket_id: int,
     request: CreateCommentRequest,
     service: TicketService = Depends(get_service),
+    current_user: UserORM = Security(get_current_user),
 ) -> CommentResponse:
     """
     Adicionar um comentário a um ticket.
@@ -245,45 +239,3 @@ def add_comment(
     except ValueError as e:
         # Converter exceção de validação em HTTP 400
         raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/admin/all")
-async def list_all_tickets_admin(
-    skip: int = 0,
-    limit: int = 10,
-    db: Session = Depends(get_db_session),
-    admin_user: UserORM = Depends(require_admin)  # 👈 ADMIN only!
-):
-    """
-    Lista TODOS os tickets (apenas ADMIN).
-    
-    ✅ Apenas administradores!
-    
-    Args:
-        admin_user: Injetado como UserORM com role == "ADMIN"
-    """
-    print(f"Admin {admin_user.name} ({admin_user.id}) acessou lista admin")
-    
-    tickets = db.query(TicketORM).offset(skip).limit(limit).all()
-    return {"tickets": tickets, "admin": admin_user.name}
-
-
-@router.delete("/{ticket_id}")
-async def delete_ticket(
-    ticket_id: int,
-    db: Session = Depends(get_db_session),
-    admin_user: UserORM = Depends(require_admin)  # 👈 ADMIN only!
-):
-    """
-    Deletar ticket (apenas ADMIN).
-    
-    ✅ Apenas administradores!
-    """
-    ticket = db.query(TicketORM).filter(TicketORM.id == ticket_id).first()
-    
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket não encontrado")
-    
-    db.delete(ticket)
-    db.commit()
-    
-    return {"message": f"Ticket {ticket_id} deletado por {admin_user.name}"}

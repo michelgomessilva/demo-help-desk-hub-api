@@ -21,8 +21,8 @@ class RegisterRequest(BaseModel):
         ...,
         min_length=2,
         max_length=255,
-        pattern=r"^[a-zA-Z\s]+$",  # 👈 Apenas letras e espaços
-        description="Nome do usuário (apenas letras e espaços)"
+        pattern=r"^[a-zA-ZáéíóúãõçÀÁÂÃÄÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜàáâãäèéêëìíîïòóôõöùúûü\s]+$",
+        description="Nome do usuário (apenas letras, acentos e espaços)"
     )
 
     email: EmailStr = Field(

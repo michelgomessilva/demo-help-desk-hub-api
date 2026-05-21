@@ -19,7 +19,9 @@ from src.domain.tickets.repositories import ITicketRepository
 from src.domain.tickets.models import Ticket, Comment
 from src.domain.tickets.enums import TicketStatus, TicketPriority, TicketCategory
 from src.infrastructure.models.ticket_orm import TicketORM, CommentORM
-import math
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class SQLAlchemyTicketRepository(ITicketRepository):
@@ -63,26 +65,34 @@ class SQLAlchemyTicketRepository(ITicketRepository):
         """
         # Guard Clause
         if not ticket:
+            logger.warning("ticket_creation_skipped", reason="ticket_is_none")
             raise ValueError("Ticket cannot be None")
 
-        # Converter de domínio para ORM
-        ticket_orm = TicketORM(
-            title=ticket.title,
-            description=ticket.description,
-            status=ticket.status,
-            priority=ticket.priority,
-            category=ticket.category,
-        )
+        logger.debug("ticket_repository_create_started", title=ticket.title, category=ticket.category.value)
 
-        # Guardar na sessão
-        self._session.add(ticket_orm)
-        # Commit — escreve na BD
-        self._session.commit()
-        # Refresh — recarrega para ter ID gerado
-        self._session.refresh(ticket_orm)
+        try:
+            # Converter de domínio para ORM
+            ticket_orm = TicketORM(
+                title=ticket.title,
+                description=ticket.description,
+                status=ticket.status,
+                priority=ticket.priority,
+                category=ticket.category,
+            )
 
-        # Converter de ORM para domínio e retornar
-        return self._orm_to_domain(ticket_orm)
+            # Guardar na sessão
+            self._session.add(ticket_orm)
+            # Commit — escreve na BD
+            self._session.commit()
+            # Refresh — recarrega para ter ID gerado
+            self._session.refresh(ticket_orm)
+
+            logger.info("ticket_created_in_database", ticket_id=ticket_orm.id, title=ticket.title)
+            # Converter de ORM para domínio e retornar
+            return self._orm_to_domain(ticket_orm)
+        except Exception as e:
+            logger.error("ticket_repository_create_error", error=str(e), title=ticket.title)
+            raise
 
     def get_all(
         self,

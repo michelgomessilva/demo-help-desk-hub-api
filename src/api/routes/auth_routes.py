@@ -6,6 +6,7 @@ Endpoints:
 - POST /auth/login    : Login e retornar token JWT
 """
 
+from urllib import request
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from src.infrastructure.database import get_db_session
@@ -13,6 +14,9 @@ from src.application.auth_service import AuthService
 from src.infrastructure.security.jwt_handler import create_access_token
 from src.api.schemas.requests.auth_request import RegisterRequest, LoginRequest
 from src.api.schemas.responses.auth_response import TokenResponse, UserResponse
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -49,9 +53,45 @@ async def register(
         "created_at": "2026-05-07T10:00:00"
     }
     """
-    auth_service = AuthService(db)
-    user = auth_service.register(data.name, data.email, data.password)
-    return user
+    client_ip = "meu_ip" #request.client.host if request.client else "unknown"
+    logger.info(
+        "api-routes-auth-register_endpoint_called",
+        email=data.email,
+        name=data.name,
+        client_ip=client_ip
+    )
+
+    try:
+        logger.debug("calling_auth_service_register", email=data.email)
+        auth_service = AuthService(db)
+        user = auth_service.register(data.name, data.email, data.password)
+        logger.info(
+            "user_registered_via_endpoint",
+            user_id=user.id,
+            email=data.email,
+            client_ip=client_ip
+        )
+        return user
+    except HTTPException as e:
+        logger.warning(
+            "register_validation_error",
+            email=data.email,
+            status_code=e.status_code,
+            detail=e.detail,
+            client_ip=client_ip
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            "register_endpoint_error",
+            email=data.email,
+            error=str(e),
+            error_type=type(e).__name__,
+            client_ip=client_ip
+        )
+        raise
+
+
 
 
 @router.post("/login", response_model=TokenResponse)
