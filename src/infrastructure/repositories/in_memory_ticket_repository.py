@@ -17,7 +17,11 @@ Por que guardar em memória?
 from src.domain.tickets.repositories import ITicketRepository
 from src.domain.tickets.models import Ticket, Comment
 from src.domain.tickets.enums import TicketStatus, TicketPriority, TicketCategory
+from src.infrastructure.logging_config import get_logger
 import math
+
+# 👈 Obter logger estruturado
+logger = get_logger(__name__)
 
 
 class InMemoryTicketRepository(ITicketRepository):
@@ -49,7 +53,10 @@ class InMemoryTicketRepository(ITicketRepository):
         Guard Clause: verificamos que o ticket não é None no início.
         """
         if not ticket:
+            logger.warning("ticket_creation_skipped", reason="ticket_is_none")
             raise ValueError("Ticket cannot be None")
+
+        logger.debug("ticket_in_memory_create_started", title=ticket.title, category=ticket.category.value)
 
         # Atribuir um ID único
         ticket.id = self._next_ticket_id
@@ -58,6 +65,7 @@ class InMemoryTicketRepository(ITicketRepository):
         # Guardar no dicionário
         self._tickets[ticket.id] = ticket
 
+        logger.info("ticket_created_in_memory", ticket_id=ticket.id, title=ticket.title, total_tickets=len(self._tickets))
         return ticket
 
     def get_all(
@@ -86,6 +94,8 @@ class InMemoryTicketRepository(ITicketRepository):
 
         Guard Clause: validar que page e size são válidos.
         """
+        logger.debug("ticket_in_memory_get_all_started", page=page, size=size, has_filters=any([status, priority, category]))
+
         if page < 1:
             page = 1
         if size < 1:
@@ -109,6 +119,7 @@ class InMemoryTicketRepository(ITicketRepository):
         skip = (page - 1) * size
         paged_results = results[skip : skip + size]
 
+        logger.info("tickets_listed_in_memory", page=page, size=size, tickets_returned=len(paged_results), total_tickets=total)
         return (paged_results, total)
 
     def get_by_id(self, ticket_id: int) -> Ticket | None:
@@ -117,7 +128,15 @@ class InMemoryTicketRepository(ITicketRepository):
 
         Guard Clause: se ticket_id não existe, retornar None imediatamente.
         """
-        return self._tickets.get(ticket_id)
+        logger.debug("ticket_in_memory_get_by_id_started", ticket_id=ticket_id)
+        ticket = self._tickets.get(ticket_id)
+
+        if ticket:
+            logger.debug("ticket_found_in_memory", ticket_id=ticket_id, title=ticket.title)
+        else:
+            logger.warning("ticket_not_found_in_memory", ticket_id=ticket_id)
+
+        return ticket
 
     def update(self, ticket: Ticket) -> Ticket:
         """
@@ -127,13 +146,19 @@ class InMemoryTicketRepository(ITicketRepository):
         - Verificar que o ticket tem um ID válido
         - Verificar que o ticket existe
         """
+        logger.info("ticket_in_memory_update_started", ticket_id=ticket.id if ticket else None)
+
         if not ticket or ticket.id <= 0:
+            logger.warning("ticket_update_invalid_id", ticket_id=ticket.id if ticket else None)
             raise ValueError("Ticket must have a valid ID")
 
         if ticket.id not in self._tickets:
+            logger.warning("ticket_not_found_for_update_in_memory", ticket_id=ticket.id)
             raise ValueError(f"Ticket with ID {ticket.id} not found")
 
+        logger.debug("updating_ticket_in_memory", ticket_id=ticket.id, new_status=ticket.status.value)
         self._tickets[ticket.id] = ticket
+        logger.info("ticket_updated_in_memory", ticket_id=ticket.id)
         return ticket
 
     def add_comment(self, comment: Comment) -> Comment:
@@ -144,11 +169,17 @@ class InMemoryTicketRepository(ITicketRepository):
         - Verificar que o ticket existe
         - Verificar que o comentário é válido
         """
+        logger.info("comment_addition_in_memory_started", ticket_id=comment.ticket_id if comment else None)
+
         if not comment:
+            logger.warning("comment_addition_skipped_in_memory", reason="comment_is_none")
             raise ValueError("Comment cannot be None")
 
         if comment.ticket_id not in self._tickets:
+            logger.warning("comment_addition_failed_in_memory", ticket_id=comment.ticket_id, reason="ticket_not_found")
             raise ValueError(f"Ticket with ID {comment.ticket_id} not found")
+
+        logger.debug("creating_comment_in_memory", ticket_id=comment.ticket_id)
 
         # Atribuir um ID único ao comentário
         comment.id = self._next_comment_id
@@ -161,4 +192,5 @@ class InMemoryTicketRepository(ITicketRepository):
         ticket = self._tickets[comment.ticket_id]
         ticket.comments.append(comment)
 
+        logger.info("comment_added_in_memory", comment_id=comment.id, ticket_id=comment.ticket_id)
         return comment

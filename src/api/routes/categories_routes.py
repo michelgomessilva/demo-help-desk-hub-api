@@ -9,6 +9,10 @@ Este é um exemplo de como manter as rotas simples quando a lógica também é s
 
 from fastapi import APIRouter
 from src.domain.tickets.enums import TicketCategory
+from src.infrastructure.logging_config import get_logger
+
+# 👈 Obter logger estruturado
+logger = get_logger(__name__)
 
 # Criar o router para estas rotas
 router = APIRouter(tags=["Categories"])
@@ -31,4 +35,9 @@ def list_categories() -> list[str]:
     - Evita enviar uma categoria inválida
     - Mantém a API auto-documentada
     """
-    return [category.value for category in TicketCategory]
+    # 👈 Debug: endpoint de categorias acessado
+    logger.debug("list_categories_endpoint_accessed")
+    categories = [category.value for category in TicketCategory]
+    # 👈 Info: categorias retornadas
+    logger.info("categories_listed", categories_count=len(categories))
+    return categories

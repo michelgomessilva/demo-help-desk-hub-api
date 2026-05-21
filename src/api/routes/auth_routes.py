@@ -6,8 +6,7 @@ Endpoints:
 - POST /auth/login    : Login e retornar token JWT
 """
 
-from urllib import request
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from src.infrastructure.database import get_db_session
 from src.application.auth_service import AuthService
@@ -16,6 +15,7 @@ from src.api.schemas.requests.auth_request import RegisterRequest, LoginRequest
 from src.api.schemas.responses.auth_response import TokenResponse, UserResponse
 from src.infrastructure.logging_config import get_logger
 
+# 👈 Obter logger estruturado
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     data: RegisterRequest,
+    request: Request,
     db: Session = Depends(get_db_session)
 ):
     """
@@ -53,18 +54,22 @@ async def register(
         "created_at": "2026-05-07T10:00:00"
     }
     """
-    client_ip = "meu_ip" #request.client.host if request.client else "unknown"
+    # 👈 Info: iniciar registro via endpoint
+    client_ip = request.client.host if request.client else "unknown"
     logger.info(
-        "api-routes-auth-register_endpoint_called",
+        "register_endpoint_called",
         email=data.email,
         name=data.name,
         client_ip=client_ip
     )
 
     try:
+        # 👈 Debug: chamar serviço
         logger.debug("calling_auth_service_register", email=data.email)
         auth_service = AuthService(db)
         user = auth_service.register(data.name, data.email, data.password)
+
+        # 👈 Info: usuário registrado com sucesso
         logger.info(
             "user_registered_via_endpoint",
             user_id=user.id,
@@ -92,11 +97,10 @@ async def register(
         raise
 
 
-
-
 @router.post("/login", response_model=TokenResponse)
 async def login(
     data: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db_session)
 ):
     """
@@ -122,23 +126,59 @@ async def login(
         "user": { ... }
     }
     """
-    auth_service = AuthService(db)
+    # 👈 Info: iniciar login via endpoint
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(
+        "login_endpoint_called",
+        email=data.email,
+        client_ip=client_ip
+    )
 
-    # 👈 Autenticar (verificar email e senha)
-    user = auth_service.authenticate(data.email, data.password)
+    try:
+        auth_service = AuthService(db)
 
-    if not user:
-        # ❌ Email ou senha incorretos
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email ou senha incorretos"
+        # 👈 Debug: autenticar
+        logger.debug("authenticating_user", email=data.email)
+        user = auth_service.authenticate(data.email, data.password)
+
+        if not user:
+            # 👈 Warning: credenciais inválidas
+            logger.warning(
+                "login_failed_invalid_credentials",
+                email=data.email,
+                client_ip=client_ip
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Email ou senha incorretos"
+            )
+
+        # 👈 Debug: criar token JWT
+        logger.debug("creating_jwt_token", user_id=user.id, email=data.email)
+        token = create_access_token(user_id=user.id, role=user.role)
+
+        # 👈 Info: login bem-sucedido
+        logger.info(
+            "login_successful",
+            user_id=user.id,
+            email=data.email,
+            client_ip=client_ip,
+            role=user.role
         )
 
-    # 👈 Gerar JWT
-    token = create_access_token(user_id=user.id, role=user.role)
-
-    # ✅ Retornar token + dados do usuário
-    return TokenResponse(
-        access_token=token,
-        user=UserResponse.model_validate(user)
-    )
+        # ✅ Retornar token + dados do usuário
+        return TokenResponse(
+            access_token=token,
+            user=UserResponse.model_validate(user)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "login_endpoint_error",
+            email=data.email,
+            error=str(e),
+            error_type=type(e).__name__,
+            client_ip=client_ip
+        )
+        raise

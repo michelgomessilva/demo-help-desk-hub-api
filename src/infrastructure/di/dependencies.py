@@ -29,11 +29,14 @@ Nenhuma outra mudança necessária em nenhum outro ficheiro!
 from fastapi import Depends
 from src.application.ticket_service import TicketService
 from src.domain.tickets.repositories import ITicketRepository
-#from src.infrastructure.repositories.in_memory_ticket_repository import (
-#    InMemoryTicketRepository,
-#)
-from src.infrastructure.database import SessionLocal
-from src.infrastructure.repositories.sqlalchemy_ticket_repository import SQLAlchemyTicketRepository
+from src.infrastructure.repositories.in_memory_ticket_repository import (
+    InMemoryTicketRepository,
+)
+from src.infrastructure.logging_config import get_logger
+
+# 👈 Obter logger estruturado
+logger = get_logger(__name__)
+
 
 def get_repository() -> ITicketRepository:
     """
@@ -48,8 +51,10 @@ def get_repository() -> ITicketRepository:
     Returns:
         ITicketRepository: implementação do repositório (memória ou BD)
     """
-    #return InMemoryTicketRepository()
-    return SQLAlchemyTicketRepository(SessionLocal())
+    logger.debug("repository_injection_requested", repository_type="InMemoryTicketRepository")
+    repository = InMemoryTicketRepository()
+    logger.debug("repository_injected", repository_type=type(repository).__name__)
+    return repository
 
 
 def get_service(repository: ITicketRepository = Depends(get_repository)) -> TicketService:
@@ -65,4 +70,7 @@ def get_service(repository: ITicketRepository = Depends(get_repository)) -> Tick
     Returns:
         TicketService: serviço configurado com o repositório
     """
-    return TicketService(repository)
+    logger.debug("service_injection_requested", repository_type=type(repository).__name__)
+    service = TicketService(repository)
+    logger.debug("service_injected", service_type=type(service).__name__)
+    return service

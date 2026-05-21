@@ -20,15 +20,16 @@ from src.api.routes import system_routes
 from src.api.routes import ticket_routes
 from src.api.routes import categories_routes
 from src.api.routes import auth_routes
-
 from src.infrastructure.logging_config import configure_structlog, get_logger
 from src.infrastructure.middleware.logging_middleware import LoggingMiddleware
 
 # 👈 Carregar variáveis de ambiente
 load_dotenv()
 
+# 👈 Configurar logging estruturado (primeira coisa!)
 configure_structlog()
 logger = get_logger(__name__)
+
 
 def create_app() -> FastAPI:
     """
@@ -39,10 +40,15 @@ def create_app() -> FastAPI:
     Returns:
         FastAPI: a aplicação configurada e pronta a usar
     """
-    # 👈 Novo! Validar secrets na startup
+    # 👈 Validar secrets na startup
     secret_key = os.getenv("SECRET_KEY")
 
     if not secret_key:
+        logger.error(
+            "startup_failed",
+            reason="SECRET_KEY not configured",
+            error_code="CONFIG_ERROR"
+        )
         raise ValueError(
             "❌ ERRO: SECRET_KEY não configurada no .env\n"
             "Execute: openssl rand -hex 32"
@@ -63,9 +69,16 @@ def create_app() -> FastAPI:
 
     algorithm = os.getenv("ALGORITHM", "HS256")
     if algorithm not in ["HS256", "HS512"]:
+        logger.error(
+            "startup_failed",
+            reason="invalid algorithm",
+            algorithm=algorithm,
+            valid_algorithms=["HS256", "HS512"],
+            error_code="CONFIG_ERROR"
+        )
         raise ValueError(f"❌ ERRO: ALGORITHM inválido: {algorithm}")
 
-    print("[OK] Secrets validados na startup")
+    logger.info("startup_validation_passed", secret_key_length=len(secret_key), algorithm=algorithm)
 
     app = FastAPI(
         title="HelpDesk Hub API",
@@ -73,7 +86,7 @@ def create_app() -> FastAPI:
         version="1.0.0",
     )
 
-    # 👈 Novo! Configurar CORS
+    # 👈 Configurar CORS
     environment = os.getenv("ENVIRONMENT", "development")
 
     if environment == "production":
@@ -82,6 +95,7 @@ def create_app() -> FastAPI:
             "https://app.exemplo.com",
             "https://www.exemplo.com",
         ]
+        logger.debug("cors_configured", mode="production", origins_count=len(allowed_origins))
     else:
         # 👈 Desenvolvimento: mais permissivo
         allowed_origins_str = os.getenv(
@@ -89,18 +103,20 @@ def create_app() -> FastAPI:
             "http://localhost:3000,http://localhost:8000"
         )
         allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
+        logger.debug("cors_configured", mode="development", origins_count=len(allowed_origins))
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=True,           # 👈 Permitir cookies
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
         allow_headers=["Content-Type", "Authorization"],
     )
 
+    # 👈 Adicionar middleware de logging HTTP (ANTES do secure headers)
     app.add_middleware(LoggingMiddleware)
 
-    # 👈 Novo! Headers de segurança HTTP
+    # 👈 Headers de segurança HTTP
     secure_headers = secure.Secure()
 
     @app.middleware("http")
@@ -109,11 +125,28 @@ def create_app() -> FastAPI:
         response.headers.update(secure_headers.headers)
         return response
 
+    # 👈 Evento de startup da aplicação
+    @app.on_event("startup")
+    async def startup_event():
+        logger.info(
+            "application_startup",
+            app_name="HelpDesk Hub API",
+            version="1.0.0",
+            environment=environment
+        )
+
+    # 👈 Evento de shutdown da aplicação
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        logger.info("application_shutdown", app_name="HelpDesk Hub API")
+
     # Registar routers (agrupamentos de rotas)
     app.include_router(system_routes.router)       # GET /, GET /health
     app.include_router(ticket_routes.router)       # Operações com tickets
     app.include_router(categories_routes.router)   # GET /categories
-    app.include_router(auth_routes.router)         # 👈 Novo! Auth routes
+    app.include_router(auth_routes.router)         # Auth routes
+
+    logger.debug("routers_registered", routers_count=4)
 
     return app
 
@@ -121,13 +154,20 @@ def create_app() -> FastAPI:
 # Criar a instância global que o uvicorn vai usar
 app = create_app()
 
-# SEMANA 4: Criar tabelas na base de dados ao iniciar
+# 👈 Criar tabelas na base de dados ao iniciar
 # Isto garante que as tabelas existem quando a app começa
 # Em produção, deverias usar Alembic para migrações em vez disto
 try:
     from src.infrastructure.database import Base, engine
+    logger.debug("database_initialization_started", database_url=os.getenv("DATABASE_URL", "sqlite"))
     Base.metadata.create_all(bind=engine)
+    logger.info("database_tables_created_successfully")
 except Exception as e:
     # Se falhar (ex: BD não configurada), continua com InMemory
+    logger.warning(
+        "database_initialization_failed",
+        error=str(e),
+        fallback="in_memory_repository"
+    )
     print(f"Aviso: Não foi possível criar tabelas: {e}")
     print("A aplicação vai usar o repositório em memória.")

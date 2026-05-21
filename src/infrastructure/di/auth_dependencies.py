@@ -10,19 +10,21 @@ Aqui criamos funções que:
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
-from fastapi.security.http import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from src.infrastructure.database import get_db_session
 from src.infrastructure.models.user_orm import UserORM
 from src.infrastructure.security.jwt_handler import verify_token
-
+from src.infrastructure.logging_config import get_logger
 
 # 👈 HTTPBearer extrai "Authorization: Bearer <token>"
 security = HTTPBearer()
 
+# 👈 Obter logger estruturado
+logger = get_logger(__name__)
+
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials = Depends(security),
     db: Session = Depends(get_db_session)
 ) -> UserORM:
     """
@@ -58,12 +60,14 @@ async def get_current_user(
     """
 
     token = credentials.credentials
+    logger.debug("extracting_token_from_header", token_length=len(token))
 
     # 👈 Verificar token
     decoded = verify_token(token)
 
     if decoded is None:
         # ❌ Token inválido ou expirado
+        logger.warning("authentication_failed", reason="invalid_or_expired_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token inválido ou expirado",
@@ -71,12 +75,14 @@ async def get_current_user(
         )
 
     user_id = decoded["user_id"]
+    logger.debug("token_verified", user_id=user_id)
 
     # 👈 Buscar usuário no banco (dados atualizados)
     user = db.query(UserORM).filter(UserORM.id == user_id).first()
 
     if not user:
         # ❌ Usuário não existe (foi deletado?)
+        logger.warning("authentication_failed", user_id=user_id, reason="user_not_found")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuário não existe"
@@ -84,12 +90,14 @@ async def get_current_user(
 
     if not user.is_active:
         # ❌ Usuário foi desativado
+        logger.warning("authentication_failed", user_id=user_id, reason="user_inactive")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuário desativado"
         )
 
     # ✅ Usuário válido e ativo
+    logger.debug("user_authenticated_successfully", user_id=user.id, user_name=user.name, user_role=user.role)
     return user
 
 
@@ -124,12 +132,16 @@ async def require_admin(
         HTTPException 403: Se não for ADMIN
     """
 
+    logger.debug("checking_admin_permission", user_id=current_user.id, user_role=current_user.role)
+
     if current_user.role != "ADMIN":
         # ❌ Não é ADMIN
+        logger.warning("admin_access_denied", user_id=current_user.id, user_role=current_user.role)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Apenas administradores podem acessar este recurso"
         )
 
     # ✅ É ADMIN
+    logger.debug("admin_access_granted", user_id=current_user.id, user_name=current_user.name)
     return current_user
