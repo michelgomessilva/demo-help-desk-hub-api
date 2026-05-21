@@ -13,6 +13,7 @@ Este projeto demonstra como construir uma API REST moderna e escalável seguindo
 - ✅ Validação com Pydantic
 - ✅ Documentação automática com FastAPI/Swagger
 - ✅ Tratamento de exceções em camadas apropriadas
+- ✅ Logging estruturado em JSON com Structlog
 
 ## 📋 Pré-requisitos
 
@@ -158,6 +159,87 @@ Abre [http://localhost:8000/docs](http://localhost:8000/docs) e testa os endpoin
 └─────────────────────────────────────────┘
 ```
 
+## 📊 Logging Estruturado
+
+Este projeto implementa **logging estruturado em JSON** usando **Structlog**, permitindo rastrear eventos e diagnosticar problemas facilmente.
+
+### Onde ficam os logs?
+
+Os logs são salvos em `logs/app.jsonl` — um ficheiro JSONL (uma linha JSON por evento) que é mantido indefinidamente para análise posterior.
+
+Cada linha é um evento completo:
+```json
+{"timestamp":"2024-01-15T10:30:45.123456","level":"info","event":"ticket_created_successfully","ticket_id":1,"title":"Login broken","user_id":5}
+{"timestamp":"2024-01-15T10:31:12.654321","level":"warning","event":"ticket_not_found","ticket_id":999}
+{"timestamp":"2024-01-15T10:31:45.987654","level":"error","event":"database_error","error":"Connection refused"}
+```
+
+### Como consultar logs?
+
+**Últimos 10 logs em tempo real:**
+```bash
+tail -f logs/app.jsonl | jq .
+```
+
+**Filtrar por nível (apenas errors):**
+```bash
+grep '"level":"error"' logs/app.jsonl | jq .
+```
+
+**Filtrar por evento (ex: tickets criados):**
+```bash
+grep 'ticket_created_successfully' logs/app.jsonl | jq .
+```
+
+**Filtrar por user_id:**
+```bash
+grep '"user_id":5' logs/app.jsonl | jq .
+```
+
+**Ver apenas campo específico:**
+```bash
+cat logs/app.jsonl | jq '.ticket_id'
+```
+
+### Variável de ambiente
+
+```env
+LOG_LEVEL=DEBUG          # DEBUG, INFO (default), WARNING, ERROR
+```
+
+| Nível | O que mostra |
+|-------|-------------|
+| `DEBUG` | Todos os eventos, incluindo detalhes internos de operações |
+| `INFO` (default) | Eventos importantes: criação, atualização, autenticação |
+| `WARNING` | Apenas avisos e erros esperados (404, 400, etc) |
+| `ERROR` | Apenas erros não esperados (exceções, falhas) |
+
+### O que é logado?
+
+**Middleware HTTP** — todas as requisições:
+- Método (GET, POST, etc)
+- Caminho (/tickets, /auth/login, etc)
+- Status code (200, 404, 500, etc)
+- Tempo de processamento (ms)
+- IP do cliente
+- User ID (se autenticado com JWT)
+
+**Camada de Aplicação** — lógica de negócio:
+- Criação/atualização de tickets
+- Autenticação e login
+- Validações e erros de negócio
+
+**Banco de dados** — operações ORM:
+- Inserts, updates, queries
+- Relacionamentos
+
+**Segurança** — JWT:
+- Criação de tokens
+- Verificação de tokens
+- Extrações de claims
+
+Lê **[EXPLANATION.md — Logging Estruturado](./EXPLANATION.md#logging-estruturado)** para detalhes completos sobre que eventos são emitidos em cada camada.
+
 ## 📁 Estrutura do projeto
 
 ```
@@ -272,11 +354,13 @@ Lê **[EXPLANATION.md — Alembic](./EXPLANATION.md#alembic--migrações-de-banc
 
 ## 📚 Documentação completa
 
-Lê **[EXPLANATION.md](./EXPLANATION.md)** (40-50 min) para:
+Lê **[EXPLANATION.md](./EXPLANATION.md)** (50-60 min) para:
 
 - Explicação detalhada de cada ficheiro
 - Exemplos reais de SOLID aplicado
 - Como evitar armadilhas comuns
+- Sistema de logging estruturado
+- Como adicionar logs a novos componentes
 - Roadmap de próximas funcionalidades
 
 ## 🚀 Próximos passos
@@ -289,18 +373,26 @@ Depois de compreender a arquitetura atual, evolui o projeto com:
    - ✅ ORM models definidos (TicketORM, CommentORM, UserORM)
    - Próximo: Implementar SQLAlchemyTicketRepository completo e trocar repositório
 
-2. **Autenticação (JWT)**
-   - Tabela de users já existe (UserORM)
-   - Implementar endpoint de login
-   - Middleware de autenticação
-   - Hash de senhas (bcrypt)
+2. **✅ Logging Estruturado com Structlog (Já Implementado!)**
+   - ✅ Logging em JSON estruturado
+   - ✅ Middleware HTTP que loga todas as requisições
+   - ✅ Logs estruturados em todas as camadas
+   - ✅ Ficheiro `logs/app.jsonl` para persistência
+   - ✅ Variável `LOG_LEVEL` para controlar verbosidade
+   - Próximo: Implementar rotação de logs para produção
 
-3. **Testes**
+3. **✅ Autenticação (JWT) (Já Implementado!)**
+   - ✅ Tabela de users já existe (UserORM)
+   - ✅ Endpoint de login implementado
+   - ✅ Middleware de autenticação
+   - ✅ Hash de senhas (bcrypt)
+
+4. **Testes**
    - Unit tests (mockar repositório)
    - Integration tests (testar com BD real)
    - E2E tests (testar fluxo completo)
 
-4. **Docker + CI/CD**
+5. **Docker + CI/CD**
    - Dockerfile para containerização
    - docker-compose.yml para PostgreSQL + API
    - GitHub Actions para testes automáticos

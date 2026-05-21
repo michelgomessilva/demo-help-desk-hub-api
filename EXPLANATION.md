@@ -12,12 +12,13 @@ Bem-vindo a este documento! Se nunca viste este projeto, lê isto do início ao 
 4. [Explicação Ficheiro a Ficheiro](#explicação-ficheiro-a-ficheiro)
 5. [Modelos ORM e Base de Dados](#modelos-orm-e-base-de-dados)
 6. [Alembic — Migrações de Banco de Dados](#alembic--migrações-de-banco-de-dados)
-7. [Princípios SOLID Aplicados](#princípios-solid-aplicados)
-8. [DRY — Don't Repeat Yourself](#dry--dont-repeat-yourself)
-9. [Guard Clauses](#guard-clauses)
-10. [Padrão Repository](#padrão-repository)
-11. [Fluxo de Uma Requisição](#fluxo-de-uma-requisição)
-12. [Como Evoluir o Projeto](#como-evoluir-o-projeto)
+7. [Logging Estruturado](#logging-estruturado)
+8. [Princípios SOLID Aplicados](#princípios-solid-aplicados)
+9. [DRY — Don't Repeat Yourself](#dry--dont-repeat-yourself)
+10. [Guard Clauses](#guard-clauses)
+11. [Padrão Repository](#padrão-repository)
+12. [Fluxo de Uma Requisição](#fluxo-de-uma-requisição)
+13. [Como Evoluir o Projeto](#como-evoluir-o-projeto)
 
 ---
 
@@ -922,6 +923,287 @@ url = os.getenv("DATABASE_URL", "sqlite:///./test.db")
 
 ---
 
+## Logging Estruturado
+
+### O que é Logging Estruturado?
+
+Logging estruturado significa guardar eventos em formato **estruturado** (não texto livre):
+
+```
+❌ Sem estrutura (texto):
+"[2024-01-15 10:30:45] User 5 created ticket 1 with title Login broken"
+
+✅ Estruturado (JSON):
+{"timestamp":"2024-01-15T10:30:45","user_id":5,"event":"ticket_created","ticket_id":1,"title":"Login broken"}
+```
+
+**Benefícios:**
+- ✅ Fácil de filtrar e analisar (com `grep`, `jq`, etc)
+- ✅ Programas podem processar automaticamente
+- ✅ Campos estruturados permitem buscar por `user_id`, `status_code`, etc
+- ✅ Histórico completo para debug e auditoria
+- ✅ Diagnosticar problemas em produção
+
+### Projeto usa Structlog
+
+**Structlog** é uma biblioteca que faz logging estruturado de forma elegante:
+
+```python
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+# Logging estruturado
+logger.info("ticket_created", ticket_id=1, title="Login broken", user_id=5)
+
+# Resultado em JSON:
+# {"timestamp":"2024-01-15T10:30:45","level":"info","event":"ticket_created","ticket_id":1,"title":"Login broken","user_id":5}
+```
+
+### `src/infrastructure/logging_config.py` — Configuração
+
+**O que é?**
+Centraliza toda a configuração de logging do projeto.
+
+```python
+def configure_structlog() -> None:
+    """Configura logging estruturado com Structlog."""
+    
+    # Pipeline de processadores (em ordem):
+    structlog.configure(
+        processors=[
+            # 1. Adiciona timestamp ISO 8601
+            structlog.processors.TimeStamper(fmt="iso"),
+            
+            # 2. Adiciona nível de log (debug, info, warning, error)
+            structlog.processors.add_log_level,
+            
+            # 3. Processa exceptions e stack traces
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.ExceptionRenderer(),
+            
+            # 4. Renderiza como JSON e salva em arquivo
+            FileAndConsoleRenderer(),
+        ],
+    )
+
+# Obter um logger
+logger = get_logger(__name__)
+logger.info("evento", campo1=valor1, campo2=valor2)
+```
+
+**Resultado:** cada log é uma linha JSON no ficheiro `logs/app.jsonl` E imprime no console simultaneamente.
+
+### `src/infrastructure/middleware/logging_middleware.py` — HTTP Request Logging
+
+**O que é?**
+Middleware que loga **todas** as requisições HTTP automaticamente.
+
+```python
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        # 1. Medir tempo
+        start_time = time.time()
+        
+        # 2. Capturar informações da requisição
+        method = request.method           # GET, POST, etc
+        path = request.url.path           # /tickets, /auth/login, etc
+        client_ip = request.client.host   # IP de origem
+        user_id = self._extract_user_id(request)  # Do JWT, se existir
+        
+        # 3. Processar a requisição
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # 4. Logar com todos os detalhes
+        logger.info("HTTP Request", 
+            method=method,
+            path=path,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            client_ip=client_ip,
+            user_id=user_id
+        )
+```
+
+**O que é capturado em cada requisição HTTP:**
+
+| Campo | O que é | Exemplo |
+|-------|---------|---------|
+| `timestamp` | Hora ISO 8601 | `2024-01-15T10:30:45.123456` |
+| `level` | Nível de log | `info`, `warning`, `error` |
+| `event` | Tipo de evento | `HTTP Request` |
+| `method` | Método HTTP | `GET`, `POST`, `PUT` |
+| `path` | Caminho da API | `/tickets`, `/auth/login` |
+| `status_code` | Status HTTP | `200`, `404`, `500` |
+| `duration_ms` | Tempo de processamento | `45.23` (ms) |
+| `client_ip` | IP de origem | `127.0.0.1` |
+| `query_string` | Parametros na URL | `page=1&size=10` |
+| `user_id` | ID do utilizador autenticado | `5` |
+
+**Exemplo real:**
+```json
+{"timestamp":"2024-01-15T10:30:45.123456","level":"info","event":"HTTP Request","method":"POST","path":"/tickets","status_code":201,"duration_ms":45.23,"client_ip":"127.0.0.1","user_id":5}
+```
+
+---
+
+### Eventos por Camada
+
+Diferentes partes da aplicação emitem diferentes eventos:
+
+#### Routes (`ticket_routes.py`, `auth_routes.py`)
+
+Cada rota loga:
+1. Quando é chamada (debug/info com parametros)
+2. Quando sucede (info)
+3. Quando falha (warning/error)
+
+**Exemplos:**
+```python
+logger.info("create_ticket_endpoint_called", user_id=5, title="Login broken", category="access")
+logger.info("ticket_created_via_endpoint", ticket_id=1, user_id=5, title="Login broken")
+logger.warning("ticket_not_found_via_endpoint", user_id=5, ticket_id=999)
+```
+
+#### Service (`ticket_service.py`, `auth_service.py`)
+
+Lógica de negócio loga:
+1. Início de operação (debug)
+2. Validações e decisões (debug/warning)
+3. Sucesso (info)
+4. Erros de negócio (warning)
+
+**Exemplos:**
+```python
+logger.debug("ticket_creation_started", title="...", category="access")
+logger.info("ticket_created_successfully", ticket_id=1, title="...")
+logger.warning("ticket_validation_failed", reason="empty_title")
+```
+
+#### JWT (`jwt_handler.py`)
+
+Autenticação loga:
+1. Criação de tokens
+2. Verificação de tokens
+3. Erros de segurança
+
+**Exemplos:**
+```python
+logger.debug("creating_jwt_token", user_id=5, role="user")
+logger.info("jwt_token_created_successfully", user_id=5, role="user")
+logger.warning("token_verification_failed", reason="invalid_signature")
+```
+
+#### Repository (`sqlalchemy_ticket_repository.py`)
+
+Operações de banco de dados:
+
+**Exemplos:**
+```python
+logger.debug("ticket_repository_create_started", title="...")
+logger.info("ticket_created_in_database", ticket_id=1, title="...")
+logger.warning("ticket_not_found_in_database", ticket_id=999)
+```
+
+---
+
+### Como Consultar Logs
+
+**Últimos 10 logs:**
+```bash
+tail -f logs/app.jsonl | jq .
+```
+
+**Filtrar por nível (errors):**
+```bash
+grep '"level":"error"' logs/app.jsonl | jq .
+```
+
+**Filtrar por evento:**
+```bash
+grep 'ticket_created_successfully' logs/app.jsonl | jq .
+```
+
+**Filtrar por user_id:**
+```bash
+grep '"user_id":5' logs/app.jsonl | jq .
+```
+
+**Ver apenas campo específico:**
+```bash
+cat logs/app.jsonl | jq '.ticket_id'
+```
+
+**Contar eventos por tipo:**
+```bash
+cat logs/app.jsonl | jq '.event' | sort | uniq -c
+```
+
+**Ver timeline de um ticket:**
+```bash
+grep '"ticket_id":1' logs/app.jsonl | jq '{timestamp, event, status_code}'
+```
+
+### Variáveis de Ambiente
+
+```env
+LOG_LEVEL=DEBUG          # DEBUG, INFO (default), WARNING, ERROR
+```
+
+| Nível | Mostra | Uso |
+|-------|--------|-----|
+| `DEBUG` | Todos eventos incluindo detalhes internos | Desenvolvimento local |
+| `INFO` | Apenas eventos importantes | Padrão (produção) |
+| `WARNING` | Apenas avisos e erros esperados | Análise de problemas |
+| `ERROR` | Apenas erros não esperados | Emergências |
+
+### Como Adicionar Logs a Novos Componentes
+
+**Passo 1: Importar logger**
+```python
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
+```
+
+**Passo 2: Logar eventos importantes**
+```python
+class MyService:
+    def process(self, data):
+        logger.debug("processing_started", data_type=type(data).__name__)
+        
+        # ... lógica ...
+        
+        if error:
+            logger.warning("processing_failed", reason="validation_error")
+            raise ValueError(...)
+        
+        logger.info("processing_completed", result_id=result.id)
+        return result
+```
+
+**Boas práticas:**
+- ✅ Nome de evento em snake_case e descritivo: `user_registered`, `ticket_created`
+- ✅ Incluir contexto relevante: `user_id=5, ticket_id=1`
+- ✅ Usar nível apropriado: `debug` = detalhes internos, `info` = sucesso, `warning` = erro esperado, `error` = crash
+- ❌ Não logar dados sensíveis: senhas, tokens completos, números de cartão
+- ❌ Não logar objetos gigantes: se é > 1KB, resumir
+
+**Exemplo bom:**
+```python
+logger.info("user_authenticated", user_id=user.id, method="password")
+# ✅ Identifica quem, método, e é seguro
+```
+
+**Exemplo ruim:**
+```python
+logger.info("user_login", user=user, password=password)
+# ❌ Loga senha em plaintext!
+```
+
+---
+
 ## Princípios SOLID Aplicados
 
 SOLID é um acrónimo para 5 princípios de design. Vamos ver como estão aplicados:
@@ -1477,15 +1759,51 @@ Não precisa de mudança arquitetónica.
    alembic upgrade head
    ```
 
-### Passo 3: Autenticação — Saber quem fez o quê
+### Passo 3: Logging Estruturado ✅ (Já Implementado!)
 
-**O que adicionar:**
-1. Tabela `users` com username/password
-2. Campo `user_id` nos tickets e comments
-3. Middleware JWT para autenticar requisições
-4. Routes de login/logout
+**Status:** ✅ Já está feito! Este projeto tem:
 
-**Exemplo:**
+✅ **Logging em JSON estruturado** — usando Structlog
+✅ **Middleware HTTP** — loga todas as requisições (method, path, status_code, duration_ms, client_ip, user_id)
+✅ **Eventos estruturados** — em todas as camadas (routes, service, repository, JWT)
+✅ **Ficheiro de logs** — `logs/app.jsonl` com histórico completo
+✅ **Controle de verbosidade** — variável `LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR)
+
+**Como usar os logs:**
+
+```bash
+# Últimos logs em tempo real
+tail -f logs/app.jsonl | jq .
+
+# Filtrar por nível (errors)
+grep '"level":"error"' logs/app.jsonl | jq .
+
+# Filtrar por evento
+grep 'ticket_created_successfully' logs/app.jsonl | jq .
+
+# Filtrar por user_id
+grep '"user_id":5' logs/app.jsonl | jq .
+```
+
+Lê **[Logging Estruturado](#logging-estruturado)** para detalhes completos.
+
+**Próximos passos em produção:**
+- Implementar rotação de logs (o ficheiro cresce indefinidamente)
+- Enviar logs para serviço de centralização (ELK Stack, Datadog, etc)
+- Alertas automáticos quando há muitos errors
+
+### Passo 4: Autenticação — Saber quem fez o quê ✅ (Já Implementado!)
+
+**Status:** ✅ Já está feito! Este projeto tem:
+
+✅ **Tabela `users`** — com email, password_hash, role, is_active
+✅ **Endpoint de registro** — POST /auth/register com validação
+✅ **Endpoint de login** — POST /auth/login que retorna JWT
+✅ **Middleware JWT** — valida tokens em requisições protegidas
+✅ **Hash de senhas** — bcrypt para segurança
+✅ **Logs de segurança** — todos os eventos de autenticação são logados
+
+**Exemplo de uso:**
 ```python
 @router.post("/login")
 def login(credentials: LoginRequest) -> TokenResponse:
@@ -1506,7 +1824,7 @@ def create_ticket(request: CreateTicketRequest, current_user: User = Depends(get
     return ticket
 ```
 
-### Passo 4: Testes — Garantir que funciona
+### Passo 5: Testes — Garantir que funciona
 
 **Testes unitários:**
 ```python
@@ -1549,7 +1867,7 @@ def test_full_workflow():
     assert response.json()["status"] == "in_progress"
 ```
 
-### Passo 5: Deployment — Colocar em produção
+### Passo 6: Deployment — Colocar em produção
 
 **Docker:**
 ```dockerfile
@@ -1587,7 +1905,7 @@ jobs:
       - run: docker push registry/helpdesk:latest
 ```
 
-### Passo 6: Funcionalidades adicionais
+### Passo 7: Funcionalidades adicionais
 
 **Possibilidades infinitas:**
 
@@ -1644,6 +1962,18 @@ Depois de ler este documento, consegues responder a isto?
 - [ ] Como trocar de memória para PostgreSQL?
 - [ ] Quantas linhas de código mudas em `TicketService`?
 - [ ] Como adicionar autenticação?
+
+### Logging Estruturado
+- [ ] O que é logging estruturado vs texto livre?
+- [ ] Por que usar JSON em logs?
+- [ ] Como consultar logs com `grep` e `jq`?
+- [ ] O que é capturado em cada requisição HTTP?
+- [ ] Qual é o pipeline de processadores do Structlog?
+- [ ] Como adicionar logs estruturados a novos componentes?
+- [ ] Qual é a diferença entre níveis DEBUG, INFO, WARNING, ERROR?
+- [ ] Onde ficam os logs? Como persistem?
+
+em?
 
 ---
 
