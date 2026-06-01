@@ -17,61 +17,64 @@ tests/
 
 ## Instalação
 
+Este projeto usa **uv** como gestor de dependências. Sempre use `uv` em vez de `pip`.
+
 ### Instalar dependências de teste
 
 ```bash
-# Com pip
-pip install -e ".[test]"
+# Adicionar como dependências de desenvolvimento
+uv add --dev pytest pytest-asyncio httpx
 
-# Com uv (se usando uv)
-uv pip install -e ".[test]"
+# Ou instalar todas as dependências do projeto (incluindo dev)
+uv sync --all-extras
 ```
 
 ## Executar Testes
 
 ### Todos os testes
 ```bash
-pytest
+uv run pytest
 ```
 
 ### Com saída verbosa
 ```bash
-pytest -v
+uv run pytest -v
 ```
 
 ### Testes de um arquivo específico
 ```bash
-pytest tests/test_auth_service.py
+uv run pytest tests/test_auth_service.py
 ```
 
 ### Testes de uma classe específica
 ```bash
-pytest tests/test_auth_service.py::TestPasswordHashing
+uv run pytest tests/test_auth_service.py::TestPasswordHashing
 ```
 
 ### Testes de um método específico
 ```bash
-pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
+uv run pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
 ```
 
 ### Testes com cobertura de código
 ```bash
-pytest --cov=src --cov-report=html
+uv add --dev pytest-cov
+uv run pytest --cov=src --cov-report=html
 ```
 
 ### Apenas testes rápidos (excluindo lentos)
 ```bash
-pytest -m "not slow"
+uv run pytest -m "not slow"
 ```
 
 ### Parar no primeiro erro
 ```bash
-pytest -x
+uv run pytest -x
 ```
 
 ### Último teste que falhou
 ```bash
-pytest --lf
+uv run pytest --lf
 ```
 
 ## Estrutura de Testes
@@ -168,10 +171,10 @@ class TestCreateTicket:
 def test_example(self, fixture):
     # Arrange - Preparar dados
     data = {"title": "Test"}
-    
+
     # Act - Executar ação
     result = service.create(data)
-    
+
     # Assert - Verificar resultado
     assert result.id > 0
 ```
@@ -200,13 +203,19 @@ def test_error(self, service):
 
 ## Integração Contínua
 
-Para usar testes em CI/CD:
+Para usar testes em CI/CD com uv:
 
 ```yaml
 # GitHub Actions example
+- name: Install uv
+  uses: astral-sh/setup-uv@v3
+
+- name: Install dependencies
+  run: uv sync --all-extras
+
 - name: Run tests
-  run: pytest --cov=src
-  
+  run: uv run pytest --cov=src
+
 - name: Upload coverage
   uses: codecov/codecov-action@v3
 ```
@@ -218,6 +227,7 @@ Para usar testes em CI/CD:
 3. **Rapidez**: Testes devem rodar rápido (sem I/O real)
 4. **Completude**: Cobrir casos normais e edge cases
 5. **DRY**: Reutilizar fixtures em vez de duplicar setup
+6. **uv**: Sempre use `uv run` para executar comandos do projeto
 
 ## Troubleshooting
 
@@ -227,20 +237,19 @@ Para usar testes em CI/CD:
 # - Arquivos: test_*.py ou *_test.py
 # - Classes: Test*
 # - Métodos: test_*
-pytest --collect-only
+uv run pytest --collect-only
 ```
 
 ### ImportError em testes
 ```bash
-# Garantir que a pasta raiz está no PYTHONPATH
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-pytest
+# uv gere automaticamente o PYTHONPATH ao executar
+uv run pytest
 ```
 
 ### Testes lentos
 ```bash
 # Encontrar testes lentos
-pytest --durations=10
+uv run pytest --durations=10
 ```
 
 ## Próximas Etapas

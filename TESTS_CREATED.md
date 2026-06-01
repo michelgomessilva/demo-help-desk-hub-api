@@ -192,7 +192,7 @@ demo-help-desk-hub-api/
 
 ## 🚀 Como Começar
 
-### 1. Instalar Dependências
+### 1. Instalar Dependências (com uv)
 ```bash
 # Windows
 .\setup_tests.bat
@@ -200,13 +200,13 @@ demo-help-desk-hub-api/
 # Linux/Mac
 bash setup_tests.sh
 
-# Ou manualmente
-pip install pytest pytest-asyncio httpx
+# Ou manualmente com uv
+uv add --dev pytest pytest-asyncio httpx
 ```
 
 ### 2. Executar Testes
 ```bash
-pytest
+uv run pytest
 ```
 
 ### 3. Ver Resultado
@@ -225,7 +225,7 @@ pytest
 
 ## 📈 Próximos Passos
 
-- [ ] Executar `pytest` para validar instalação
+- [ ] Executar `uv run pytest` para validar instalação
 - [ ] Ler `README.TESTS.md` para uso rápido
 - [ ] Consultar `TESTING.md` para guia completo
 - [ ] Adicionar testes para novos código

@@ -134,36 +134,37 @@ def create_multiple_tickets() # Factory para múltiplos tickets
 
 ## 🚀 Como Usar
 
-### Instalação de Dependências
+### Instalação de Dependências (com uv)
 ```bash
-# Com pip
-pip install -e ".[test]"
+# Adicionar dependências de teste
+uv add --dev pytest pytest-asyncio httpx
 
-# Com uv
-uv pip install -e ".[test]"
+# Ou sincronizar todas as dependências do projeto
+uv sync
 ```
 
 ### Executar Testes
 ```bash
 # Todos os testes
-pytest
+uv run pytest
 
 # Com saída verbosa
-pytest -v
+uv run pytest -v
 
 # Testes específicos
-pytest tests/test_auth_service.py
-pytest tests/test_auth_service.py::TestPasswordHashing
-pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
+uv run pytest tests/test_auth_service.py
+uv run pytest tests/test_auth_service.py::TestPasswordHashing
+uv run pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
 
 # Com cobertura
-pytest --cov=src --cov-report=html
+uv add --dev pytest-cov
+uv run pytest --cov=src --cov-report=html
 
 # Parar no primeiro erro
-pytest -x
+uv run pytest -x
 
 # Últimos testes que falharam
-pytest --lf
+uv run pytest --lf
 ```
 
 ## 📝 Convenções Utilizadas
@@ -284,8 +285,8 @@ def test_get_non_existent_ticket_raises_error(self, ticket_service):
 A estrutura de testes está completa e pronta para uso! Os testes cobrem todos os componentes principais da aplicação, fornecem feedback rápido e são fáceis de manter.
 
 Para começar:
-1. Instalar dependências: `pip install -e ".[test]"`
-2. Executar testes: `pytest`
-3. Ver cobertura: `pytest --cov=src`
+1. Instalar dependências: `uv add --dev pytest pytest-asyncio httpx`
+2. Executar testes: `uv run pytest`
+3. Ver cobertura: `uv run pytest --cov=src`
 
 Boa sorte com os testes! 🚀

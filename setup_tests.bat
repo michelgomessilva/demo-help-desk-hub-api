@@ -1,58 +1,48 @@
 @echo off
-REM Script para configurar ambiente de testes no Windows
+REM Script para configurar ambiente de testes no Windows (usando uv)
 
 echo.
 echo ==========================================
-echo   Configurando Ambiente de Testes
+echo   Configurando Ambiente de Testes (uv)
 echo ==========================================
 echo.
 
-REM Verificar se Python está instalado
-python --version >nul 2>&1
+REM Verificar se uv está instalado
+uv --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ Python nao encontrado. Por favor, instale Python 3.11+
+    echo ❌ uv nao encontrado. Por favor, instale uv primeiro:
+    echo    powershell -c "irm https://astral.sh/uv/install.ps1 ^| iex"
+    echo    ou visite: https://docs.astral.sh/uv/
     exit /b 1
 )
 
-echo ✅ Python encontrado:
-python --version
+echo ✅ uv encontrado:
+uv --version
 echo.
 
-REM Criar venv se não existir
-if not exist ".venv" (
-    echo 📦 Criando virtual environment...
-    python -m venv .venv
-    echo ✅ Virtual environment criado
-) else (
-    echo ✅ Virtual environment ja existe
+REM Sincronizar dependências do projeto
+echo 📦 Sincronizando dependências do projeto com uv sync...
+uv sync
+if errorlevel 1 (
+    echo ❌ Falha ao sincronizar dependências
+    exit /b 1
 )
-
+echo ✅ Dependências sincronizadas
 echo.
 
-REM Ativar venv
-if exist ".venv\Scripts\activate.bat" (
-    call .venv\Scripts\activate.bat
+REM Adicionar dependências de teste
+echo 📦 Adicionando dependências de teste (pytest, pytest-asyncio, httpx)...
+uv add --dev pytest pytest-asyncio httpx
+if errorlevel 1 (
+    echo ❌ Falha ao adicionar dependências de teste
+    exit /b 1
 )
-
-echo ✅ Virtual environment ativado
-echo.
-
-REM Instalar dependências principais
-echo 📦 Instalando dependências principais...
-pip install --upgrade pip setuptools wheel
-pip install -e .
-echo ✅ Dependências principais instaladas
-echo.
-
-REM Instalar dependências de teste
-echo 📦 Instalando dependências de teste...
-pip install pytest pytest-asyncio httpx
-echo ✅ Dependências de teste instaladas
+echo ✅ Dependências de teste adicionadas
 echo.
 
 REM Verificar instalação
 echo 🧪 Verificando instalação...
-python -m pytest --version
+uv run pytest --version
 echo.
 
 REM Sugerir próximos passos
@@ -62,13 +52,14 @@ echo ==========================================
 echo.
 echo Proximos passos:
 echo 1. Executar todos os testes:
-echo    pytest
+echo    uv run pytest
 echo.
 echo 2. Executar testes com cobertura:
-echo    pytest --cov=src --cov-report=html
+echo    uv add --dev pytest-cov
+echo    uv run pytest --cov=src --cov-report=html
 echo.
 echo 3. Executar testes especificos:
-echo    pytest tests/test_auth_service.py
+echo    uv run pytest tests/test_auth_service.py
 echo.
 echo 4. Ver documentacao:
 echo    type TESTING.md

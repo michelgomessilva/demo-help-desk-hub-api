@@ -9,8 +9,8 @@
 # Via script (recomendado)
 .\setup_tests.bat
 
-# Ou manualmente
-pip install pytest pytest-asyncio httpx
+# Ou manualmente com uv
+uv add --dev pytest pytest-asyncio httpx
 ```
 
 **Linux/Mac (Bash):**
@@ -18,28 +18,28 @@ pip install pytest pytest-asyncio httpx
 # Via script (recomendado)
 bash setup_tests.sh
 
-# Ou manualmente
-pip install pytest pytest-asyncio httpx
+# Ou manualmente com uv
+uv add --dev pytest pytest-asyncio httpx
 ```
 
 ### 2️⃣ Executar Testes
 
 ```bash
 # Todos os testes
-pytest
+uv run pytest
 
 # Com saída detalhada
-pytest -v
+uv run pytest -v
 
 # Com cobertura de código
-pytest --cov=src --cov-report=html
+uv run pytest --cov=src --cov-report=html
 ```
 
 ### 3️⃣ Ver Resultado
 
 ```
 ======================== test session starts =========================
-collected 263 items
+collected 188 items
 
 tests/test_auth_service.py ............................ [ 14%]
 tests/test_ticket_service.py ................................... [ 39%]
@@ -48,7 +48,7 @@ tests/test_api_routes.py ............................... [ 68%]
 tests/test_domain.py ...................................... [ 86%]
 tests/test_app_configuration.py ............................ [100%]
 
-======================== 263 passed in 2.34s ==========================
+======================== 188 passed in 2.34s ==========================
 ```
 
 ## 📋 Testes Disponíveis
@@ -62,7 +62,7 @@ tests/test_app_configuration.py ............................ [100%]
 | `test_domain.py` | 47 | Modelos, enums e exceções |
 | `test_app_configuration.py` | 35 | Configuração e inicialização |
 
-**Total: 263 testes**
+**Total: 188 testes**
 
 ## 🎯 Comandos Úteis
 
@@ -70,40 +70,43 @@ tests/test_app_configuration.py ............................ [100%]
 
 ```bash
 # Um arquivo
-pytest tests/test_auth_service.py
+uv run pytest tests/test_auth_service.py
 
 # Uma classe
-pytest tests/test_auth_service.py::TestPasswordHashing
+uv run pytest tests/test_auth_service.py::TestPasswordHashing
 
 # Um método
-pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
+uv run pytest tests/test_auth_service.py::TestPasswordHashing::test_hash_password_returns_string
 
 # Com padrão no nome
-pytest -k "test_hash"
-pytest -k "password and not verify"
+uv run pytest -k "test_hash"
+uv run pytest -k "password and not verify"
 ```
 
 ### Controle de Execução
 
 ```bash
 # Parar no primeiro erro
-pytest -x
+uv run pytest -x
 
 # Mostrar últimos 3 testes que falharam
-pytest --lf -v
+uv run pytest --lf -v
 
 # Executar apenas testes rápidos
-pytest -m "not slow"
+uv run pytest -m "not slow"
 
 # Listar testes sem executar
-pytest --collect-only
+uv run pytest --collect-only
 ```
 
 ### Análise de Cobertura
 
 ```bash
+# Instalar pytest-cov (uma vez)
+uv add --dev pytest-cov
+
 # Gerar relatório HTML
-pytest --cov=src --cov-report=html
+uv run pytest --cov=src --cov-report=html
 
 # Abrir relatório (Windows)
 start htmlcov\index.html
@@ -119,13 +122,13 @@ firefox htmlcov/index.html
 
 ```bash
 # Mostrar print statements
-pytest -s
+uv run pytest -s
 
 # Debugger interativo
-pytest --pdb
+uv run pytest --pdb
 
 # Verbose com traceback
-pytest -vv --tb=long
+uv run pytest -vv --tb=long
 ```
 
 ## 📖 Estrutura de Testes
@@ -159,20 +162,20 @@ Executar testes antes de fazer commit:
 
 ```bash
 # Pre-commit hook
-echo 'pytest' > .git/hooks/pre-commit
+echo 'uv run pytest' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
 ## ❓ FAQ
 
 **P: Testes estão lentos?**
-R: Isso é normal na primeira execução. Use `pytest -x` para parar no primeiro erro.
+R: Isso é normal na primeira execução. Use `uv run pytest -x` para parar no primeiro erro.
 
 **P: Como adicionar novos testes?**
 R: Crie um arquivo `test_algo.py` em `tests/` e siga o padrão `test_o_que_testa()`.
 
 **P: Preciso de dados reais nos testes?**
-R: Use as fixtures em `conftest.py` - elas criam dados de teste automáticamente.
+R: Use as fixtures em `conftest.py` - elas criam dados de teste automaticamente.
 
 **P: Como mockar dependências?**
 R: Use `unittest.mock.Mock` ou as fixtures já preparadas.
@@ -187,13 +190,13 @@ Para guia detalhado, veja:
 
 ```bash
 # Setup (primeira vez)
-pip install pytest pytest-asyncio httpx
+uv add --dev pytest pytest-asyncio httpx
 
 # Executar testes
-pytest
+uv run pytest
 
 # Verificar cobertura
-pytest --cov=src
+uv run pytest --cov=src
 
 # Feito! ✨
 ```
