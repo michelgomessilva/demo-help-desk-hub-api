@@ -3,7 +3,7 @@
 # ============================================================================
 # Stage 1: Builder - instala dependências com uv
 # ============================================================================
-FROM python:3.12-slim AS builder
+FROM python:3.11-slim AS builder
 
 # Instalar uv (gestor de dependências do projeto)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ============================================================================
 # Stage 2: Runtime - imagem final mínima
 # ============================================================================
-FROM python:3.12-slim AS runtime
+FROM python:3.11-slim AS runtime
 
 # Dependências de runtime (libpq para psycopg2)
 RUN apt-get update && apt-get install -y --no-install-recommends \
