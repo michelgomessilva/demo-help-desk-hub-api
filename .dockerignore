@@ -1,0 +1,47 @@
+# Virtual environments
+.venv
+venv
+env
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Git
+.git
+.gitignore
+
+# Logs
+logs
+*.log
+
+# Environment files (NÃO copiar segredos para a imagem)
+.env
+.env.local
+
+# Docs e testes (não necessários no runtime)
+docs
+tests
+*.md
+!README.md
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db

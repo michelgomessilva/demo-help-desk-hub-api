@@ -1,0 +1,76 @@
+services:
+  # ==========================================================================
+  # PostgreSQL - base de dados
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: helpdesk_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-helpdesk_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helpdesk_password}
+      POSTGRES_DB: ${POSTGRES_DB:-helpdesk_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-helpdesk_user} -d ${POSTGRES_DB:-helpdesk_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - helpdesk_net
+
+  # ==========================================================================
+  # API HelpDesk Hub - aplicação FastAPI
+  # ==========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: helpdesk_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Banco de dados (host = nome do serviço no compose)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-helpdesk_user}:${POSTGRES_PASSWORD:-helpdesk_password}@postgres:5432/${POSTGRES_DB:-helpdesk_db}
+
+      # Ambiente
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # JWT / Segurança (obrigatórios — ver .env)
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # CORS
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - helpdesk_net
+    # Executar migrações Alembic antes de iniciar a aplicação
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn src.main:app --host 0.0.0.0 --port 8000"
+
+# ==========================================================================
+# Volumes - persistência de dados
+# ==========================================================================
+volumes:
+  postgres_data:
+    driver: local
+
+# ==========================================================================
+# Networks - comunicação entre serviços
+# ==========================================================================
+networks:
+  helpdesk_net:
+    driver: bridge
