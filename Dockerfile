@@ -69,7 +69,9 @@ EXPOSE 8000
 
 # Health check usa o endpoint /health da app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+    CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
 
-# Iniciar a aplicação com uvicorn
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Iniciar a aplicação:
+# 1. Aplicar migrações Alembic (idempotente — só corre o que falta)
+# 2. Subir uvicorn na porta indicada por $PORT (Render injeta) ou 8000 (local)
+CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

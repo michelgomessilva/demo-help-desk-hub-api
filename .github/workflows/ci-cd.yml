@@ -1,0 +1,115 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ==========================================================================
+  # CI - Corre os testes em PRs e pushes
+  # ==========================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run pytest
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+          SECRET_KEY: test_secret_key_at_least_32_characters_long_for_ci
+          ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+          ENVIRONMENT: development
+          ALLOWED_ORIGINS: http://localhost:3000
+        run: uv run pytest
+
+  # ==========================================================================
+  # CD - Deploy no Render (só corre em push para main e se test passou)
+  # ==========================================================================
+  deploy:
+    name: Deploy to Render
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy and wait for completion
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+
+          echo "🚀 Triggering Render deploy..."
+          RESPONSE=$(curl -fsSL -X POST "$RENDER_DEPLOY_HOOK")
+          echo "Response: $RESPONSE"
+
+          DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.deploy.id // empty')
+
+          if [ -z "$DEPLOY_ID" ]; then
+            echo "⚠️  Could not extract deploy id — deploy was triggered but won't be tracked."
+            echo "    Check the Render dashboard manually."
+            exit 0
+          fi
+
+          echo "📦 Deploy ID: $DEPLOY_ID"
+          echo "⏳ Polling deploy status (max ~10 min)..."
+
+          for i in $(seq 1 40); do
+            STATUS=$(curl -fsSL \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID" \
+              | jq -r '.status')
+
+            echo "[$i/40] Status: $STATUS"
+
+            case "$STATUS" in
+              live)
+                echo "✅ Deploy succeeded!"
+                exit 0
+                ;;
+              build_failed|update_failed|canceled|deactivated)
+                echo "❌ Deploy failed with status: $STATUS"
+                exit 1
+                ;;
+              created|build_in_progress|update_in_progress|pre_deploy_in_progress)
+                sleep 15
+                ;;
+              *)
+                echo "⚠️  Unknown status: $STATUS — continuing to poll"
+                sleep 15
+                ;;
+            esac
+          done
+
+          echo "❌ Timeout waiting for deploy"
+          exit 1
