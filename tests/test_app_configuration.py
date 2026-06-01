@@ -35,16 +35,14 @@ class TestAppConfiguration:
     def test_app_has_middleware(self):
         """Aplicação deve ter middleware configurado."""
         app = create_app()
-        # Verificar que middleware foi adicionado
-        assert len(app.middleware) > 0
+        # user_middleware é a lista pública de middlewares registados via add_middleware()
+        assert len(app.user_middleware) > 0
 
     def test_app_cors_configured(self):
         """CORS deve estar configurado."""
         app = create_app()
-        # Procurar por middleware CORS
-        has_cors = any("CORSMiddleware" in str(type(m)) for m in app.middleware)
-        # Ou verificar que a aplicação foi criada (CORS foi adicionado no create_app)
-        assert app is not None
+        has_cors = any("CORSMiddleware" in str(m.cls) for m in app.user_middleware)
+        assert has_cors
 
 
 class TestEnvironmentVariables:
@@ -211,5 +209,4 @@ class TestCORSConfiguration:
     def test_cors_methods_configured(self):
         """Métodos HTTP permitidos devem estar configurados."""
         app = create_app()
-        # Verificar que middleware foi adicionado
-        assert len(app.middleware) > 0
+        assert len(app.user_middleware) > 0
