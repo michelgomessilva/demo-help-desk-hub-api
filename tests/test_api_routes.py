@@ -13,12 +13,28 @@ Cobre:
 import pytest
 from fastapi.testclient import TestClient
 from src.main import create_app
+from src.application.ticket_service import TicketService
+from src.infrastructure.di.dependencies import get_repository, get_service
+from src.infrastructure.repositories.in_memory_ticket_repository import (
+    InMemoryTicketRepository,
+)
 
 
 @pytest.fixture
 def app():
-    """Aplicação FastAPI para testes."""
-    return create_app()
+    """
+    Aplicação FastAPI para testes com repositório singleton.
+
+    Por defeito get_repository() cria um InMemoryTicketRepository novo a cada
+    request, o que faz com que dados criados num POST não sejam visíveis em
+    requests seguintes. Para os testes, fazemos override para usar um único
+    repositório partilhado durante o teste.
+    """
+    app = create_app()
+    shared_repository = InMemoryTicketRepository()
+    app.dependency_overrides[get_repository] = lambda: shared_repository
+    app.dependency_overrides[get_service] = lambda: TicketService(shared_repository)
+    return app
 
 
 @pytest.fixture
