@@ -57,6 +57,12 @@ class FileAndConsoleRenderer:
 def configure_structlog() -> None:
     """Configura logging estruturado com Structlog."""
 
+    # Import tardio para evitar import circular (observability importa get_logger).
+    # Este processor injeta trace_id/span_id quando existe um span OpenTelemetry
+    # ativo, permitindo correlação direta logs <-> traces. É graceful: se o OTel
+    # não estiver instalado/ativo, o event_dict passa inalterado.
+    from src.infrastructure.observability import add_trace_context
+
     # Configurar logging padrão do Python
     logging.basicConfig(
         format="%(message)s",
@@ -73,11 +79,14 @@ def configure_structlog() -> None:
             # 2. Adiciona nível de log
             structlog.processors.add_log_level,
 
-            # 3. Processa exceptions
+            # 3. Correlação com traces: injeta trace_id/span_id (se houver span ativo)
+            add_trace_context,
+
+            # 4. Processa exceptions
             structlog.processors.StackInfoRenderer(),
             structlog.processors.ExceptionRenderer(),
 
-            # 4. Renderiza como JSON e salva em arquivo
+            # 5. Renderiza como JSON e salva em arquivo
             FileAndConsoleRenderer(),
         ],
         context_class=dict,

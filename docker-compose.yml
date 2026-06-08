@@ -35,6 +35,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     environment:
       # Banco de dados (host = nome do serviço no compose)
       DATABASE_URL: postgresql://${POSTGRES_USER:-helpdesk_user}:${POSTGRES_PASSWORD:-helpdesk_password}@postgres:5432/${POSTGRES_DB:-helpdesk_db}
@@ -50,6 +52,13 @@ services:
 
       # CORS
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+
+      # Observabilidade (OpenTelemetry) — enviar telemetria ao Collector.
+      # Para desligar a telemetria, basta remover/limpar OTEL_EXPORTER_OTLP_ENDPOINT
+      # ou definir OTEL_SDK_DISABLED=true.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-helpdesk-hub-api}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     ports:
       - "8000:8000"
     volumes:
@@ -61,11 +70,112 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn src.main:app --host 0.0.0.0 --port 8000"
 
+  # ==========================================================================
+  # OpenTelemetry Collector - ponto central da observabilidade
+  # ==========================================================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: helpdesk_otel_collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+      # Lê os logs JSON escritos pela API (mesmo diretório ./logs do host).
+      - ./logs:/var/log/app:ro
+    ports:
+      - "4318:4318"   # OTLP HTTP (telemetria da app)
+      - "4317:4317"   # OTLP gRPC
+      - "8889:8889"   # métricas expostas para o Prometheus
+    networks:
+      - helpdesk_net
+
+  # ==========================================================================
+  # Loki - agregação de logs
+  # ==========================================================================
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: helpdesk_loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - helpdesk_net
+
+  # ==========================================================================
+  # Tempo - armazenamento de traces
+  # ==========================================================================
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: helpdesk_tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+    networks:
+      - helpdesk_net
+
+  # ==========================================================================
+  # Prometheus - recolha de métricas
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: helpdesk_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - helpdesk_net
+
+  # ==========================================================================
+  # Grafana - visualização (dashboards, Explore)
+  # ==========================================================================
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: helpdesk_grafana
+    restart: unless-stopped
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./observability/grafana:/etc/grafana/provisioning/datasources:ro
+      - grafana_data:/var/lib/grafana
+    # Porta 3001 no host para não colidir com a frontend (3000).
+    ports:
+      - "3001:3000"
+    networks:
+      - helpdesk_net
+
 # ==========================================================================
 # Volumes - persistência de dados
 # ==========================================================================
 volumes:
   postgres_data:
+    driver: local
+  loki_data:
+    driver: local
+  tempo_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 # ==========================================================================

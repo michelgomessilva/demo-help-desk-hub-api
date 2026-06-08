@@ -148,6 +148,17 @@ def create_app() -> FastAPI:
 
     logger.debug("routers_registered", routers_count=4)
 
+    # 👈 Observabilidade (OpenTelemetry): traces + métricas + instrumentação.
+    # Graceful: se a stack estiver desligada (sem OTEL_EXPORTER_OTLP_ENDPOINT),
+    # esta chamada não tem efeito e a app continua a funcionar normalmente.
+    try:
+        from src.infrastructure.database import engine
+        from src.infrastructure.observability import configure_observability
+
+        configure_observability(app, engine=engine)
+    except Exception as e:
+        logger.warning("observability_setup_skipped", error=str(e))
+
     return app
 
 

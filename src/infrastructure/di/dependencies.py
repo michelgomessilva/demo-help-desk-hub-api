@@ -27,10 +27,12 @@ Nenhuma outra mudança necessária em nenhum outro ficheiro!
 """
 
 from fastapi import Depends
+from sqlalchemy.orm import Session
 from src.application.ticket_service import TicketService
 from src.domain.tickets.repositories import ITicketRepository
-from src.infrastructure.repositories.in_memory_ticket_repository import (
-    InMemoryTicketRepository,
+from src.infrastructure.database import get_db_session
+from src.infrastructure.repositories.sqlalchemy_ticket_repository import (
+    SQLAlchemyTicketRepository,
 )
 from src.infrastructure.logging_config import get_logger
 
@@ -38,21 +40,22 @@ from src.infrastructure.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def get_repository() -> ITicketRepository:
+def get_repository(db: Session = Depends(get_db_session)) -> ITicketRepository:
     """
     Dependência que fornece o repositório de tickets.
 
     FastAPI chama esta função automaticamente e injeta o resultado
     em qualquer rota que pedir 'repository: ITicketRepository = Depends(get_repository)'.
 
-    Semana 2/3: retorna InMemoryTicketRepository
-    Semana 4: muda para retornar SQLAlchemyTicketRepository
+    Usa SQLAlchemyTicketRepository (PostgreSQL): os tickets ficam persistidos
+    entre pedidos. A sessão da BD é injetada via Depends(get_db_session) e
+    fechada automaticamente no fim do request.
 
     Returns:
-        ITicketRepository: implementação do repositório (memória ou BD)
+        ITicketRepository: implementação do repositório (PostgreSQL)
     """
-    logger.debug("repository_injection_requested", repository_type="InMemoryTicketRepository")
-    repository = InMemoryTicketRepository()
+    logger.debug("repository_injection_requested", repository_type="SQLAlchemyTicketRepository")
+    repository = SQLAlchemyTicketRepository(db)
     logger.debug("repository_injected", repository_type=type(repository).__name__)
     return repository
 

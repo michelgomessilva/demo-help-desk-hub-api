@@ -1,0 +1,59 @@
+# ============================================================================
+# Grafana — provisionamento automático de datasources
+# ============================================================================
+# Ao subir, o Grafana já fica ligado a Prometheus, Loki e Tempo.
+# Configura também a correlação:
+#   - Loki  -> derived field "TraceID" que cria um link para o Tempo
+#   - Tempo -> tracesToLogs / tracesToMetrics (saltar de um trace para logs/métricas)
+# ============================================================================
+
+apiVersion: 1
+
+datasources:
+  # --------------------------------------------------------------------------
+  # Métricas
+  # --------------------------------------------------------------------------
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  # --------------------------------------------------------------------------
+  # Traces
+  # --------------------------------------------------------------------------
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+
+  # --------------------------------------------------------------------------
+  # Logs
+  # --------------------------------------------------------------------------
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # Extrai o trace_id do JSON do log e cria link direto para o Tempo.
+        - name: TraceID
+          matcherType: regex
+          matcherRegex: '"trace_id":\s*"([a-f0-9]+)"'
+          url: "$${__value.raw}"
+          datasourceUid: tempo
