@@ -16,20 +16,22 @@ correlação direta entre eles no Grafana.
 ## Índice
 
 1. [O que é observabilidade (os 3 pilares)](#1-o-que-é-observabilidade-os-3-pilares)
-2. [Arquitetura da solução](#2-arquitetura-da-solução)
-3. [O que foi alterado no código](#3-o-que-foi-alterado-no-código)
-4. [Pré-requisitos](#4-pré-requisitos)
-5. [Passo 1 — Variáveis de ambiente](#passo-1--variáveis-de-ambiente)
-6. [Passo 2 — Subir a stack](#passo-2--subir-a-stack)
-7. [Passo 3 — Validar os health checks](#passo-3--validar-os-health-checks)
-8. [Passo 4 — Gerar tráfego](#passo-4--gerar-tráfego)
-9. [Passo 5 — Ver LOGS no Grafana (Loki)](#passo-5--ver-logs-no-grafana-loki)
-10. [Passo 6 — Ver TRACES no Grafana (Tempo)](#passo-6--ver-traces-no-grafana-tempo)
-11. [Passo 7 — Correlação LOG ↔ TRACE](#passo-7--correlação-log--trace)
-12. [Passo 8 — Ver MÉTRICAS no Grafana (Prometheus)](#passo-8--ver-métricas-no-grafana-prometheus)
-13. [Graceful degradation (correr sem a stack)](#9-graceful-degradation-correr-sem-a-stack)
-14. [Troubleshooting](#10-troubleshooting)
-15. [Como replicar isto noutro projeto (do zero)](#11-como-replicar-isto-noutro-projeto-do-zero)
+2. [Como cobrimos o projeto inteiro sem o modificar inteiro](#2-como-cobrimos-o-projeto-inteiro-sem-o-modificar-inteiro)
+3. [Arquitetura da solução](#3-arquitetura-da-solução)
+4. [O que foi alterado no código](#4-o-que-foi-alterado-no-código)
+5. [Pré-requisitos](#5-pré-requisitos)
+6. [Passo 1 — Variáveis de ambiente](#passo-1--variáveis-de-ambiente)
+7. [Passo 2 — Subir a stack](#passo-2--subir-a-stack)
+8. [Passo 3 — Validar os health checks](#passo-3--validar-os-health-checks)
+9. [Passo 4 — Gerar tráfego](#passo-4--gerar-tráfego)
+10. [Passo 5 — Ver LOGS no Grafana (Loki)](#passo-5--ver-logs-no-grafana-loki)
+11. [Passo 6 — Ver TRACES no Grafana (Tempo)](#passo-6--ver-traces-no-grafana-tempo)
+12. [Passo 7 — Correlação LOG ↔ TRACE](#passo-7--correlação-log--trace)
+13. [Passo 8 — Ver MÉTRICAS no Grafana (Prometheus)](#passo-8--ver-métricas-no-grafana-prometheus)
+14. [Graceful degradation (correr sem a stack)](#10-graceful-degradation-correr-sem-a-stack)
+15. [Troubleshooting](#11-troubleshooting)
+16. [Como replicar isto noutro projeto (do zero)](#12-como-replicar-isto-noutro-projeto-do-zero)
+17. [Mapa de alterações detalhado (ficheiros e linhas)](#13-mapa-de-alterações-detalhado-ficheiros-e-linhas)
 
 ---
 
@@ -49,7 +51,100 @@ injetando o `trace_id`/`span_id` em cada log.
 
 ---
 
-## 2. Arquitetura da solução
+## 2. Como cobrimos o projeto inteiro sem o modificar inteiro
+
+A pergunta mais importante de toda esta implementação é:
+
+> *"Como é que se mede **cada** pedido HTTP e **cada** query à base de dados sem
+> ter de mexer em todas as rotas e em todos os repositórios?"*
+
+A resposta é **auto-instrumentação** (monkey-patching em runtime) + **propagação
+implícita de contexto**. É isto que permite cobrir o projeto **inteiro** mexendo
+apenas em ~4 ficheiros.
+
+### A ideia numa frase
+
+Não instrumentamos o código rota a rota. **Embrulhamos o framework.** Numa única
+chamada, o OpenTelemetry substitui (em memória, no arranque) os métodos internos
+do FastAPI e do SQLAlchemy por versões que medem o tempo e criam *spans*. Por
+isso cada pedido HTTP e cada query passa a ser observada **sem tocar em nenhuma
+rota nem repositório**.
+
+### Os 4 mecanismos
+
+**1. Auto-instrumentação = *monkey-patching* no arranque.** Estas duas linhas em
+[observability.py:120](src/infrastructure/observability.py#L120) e
+[:125](src/infrastructure/observability.py#L125) fazem o trabalho todo:
+
+```python
+FastAPIInstrumentor.instrument_app(app)               # embrulha o middleware HTTP
+SQLAlchemyInstrumentor().instrument(engine=engine)    # embrulha a execução de queries
+```
+
+Por baixo, o instrumentor **troca em tempo de execução** funções internas do
+framework por *wrappers* que fazem, em essência:
+`span = start_span(); executa_o_original(); span.end()`. Como **todo** o tráfego
+HTTP passa pelo middleware do FastAPI e **toda** a query passa pelo engine do
+SQLAlchemy, instrumentar esses dois pontos cobre 100% da aplicação. A lógica de
+negócio nem sabe que está a ser medida.
+
+> 🔌 **Analogia:** não pões um cronómetro em cada funcionário; pões um sensor na
+> **porta de entrada** e na **porta da base de dados**. Toda a gente passa por lá.
+
+**2. Propagação implícita de contexto (`contextvars`).** *"Como é que a query SQL
+sabe a que pedido HTTP pertence?"* — sem lhe passarmos nada. O OTel mantém o
+**"span atual"** num `contextvar` (variável de contexto por tarefa). Quando o
+wrapper do FastAPI abre o span do pedido, este torna-se o "span atual"; quando,
+mais abaixo na pilha de chamadas, o SQLAlchemy abre o span da query, ele lê o
+"span atual" e **liga-se a ele como filho** — automaticamente. É assim que se
+constrói a *waterfall* (HTTP → query1 → query2) sem ninguém passar IDs à mão.
+
+**3. A única alteração transversal: correlacionar logs com traces.** Traces e
+métricas saem "de graça" da auto-instrumentação. Os **logs** são o único sítio que
+precisou de uma alteração — e mínima: **+1 linha** na pipeline do structlog
+([logging_config.py:82-83](src/infrastructure/logging_config.py#L82-L83)):
+
+```python
+add_trace_context,   # injeta trace_id/span_id no log
+```
+
+Esse processor ([observability.py:144-168](src/infrastructure/observability.py#L144-L168))
+**também não recebe nada**: vai buscar o "span atual" ao mesmo `contextvar`
+(`trace.get_current_span()`) e copia o `trace_id`/`span_id` para o log. Por isso,
+nem a correlação log↔trace exige passar IDs pelo código.
+
+**4. Um único ponto de entrada + módulo isolado.** Tudo é ligado **uma vez**, na
+fábrica da app ([main.py:151-161](src/main.py#L151-L161)):
+
+```python
+configure_observability(app, engine=engine)
+```
+
+Toda a complexidade (providers, exporters, instrumentação) vive **dentro de um só
+módulo** (`observability.py`). O resto do projeto **não importa OpenTelemetry em
+lado nenhum**. Para remover a observabilidade, apagas o módulo e esta chamada — e
+mais nada.
+
+### Por isso a "pegada" no código é tão pequena
+
+| O que querias observar | O que tiveste de escrever |
+|------------------------|---------------------------|
+| Todos os pedidos HTTP | 1 linha (`instrument_app`) |
+| Todas as queries à BD | 1 linha (`instrument(engine)`) |
+| Métricas de latência/contagem | 0 linhas (vêm da mesma instrumentação) |
+| `trace_id` em cada log | 1 linha na pipeline + 1 processor isolado |
+| Ligar tudo | 1 chamada na fábrica da app |
+
+O "trabalho pesado" não está no código Python — está na **configuração externa**
+(`docker-compose.yml` + `observability/*.yaml`), que é declarativa e não toca na
+aplicação. A app só conhece **um endereço**: o do Collector
+([observability.py:76](src/infrastructure/observability.py#L76)). Quem distribui
+para Loki/Tempo/Prometheus é o Collector — *desacoplamento total* (ver
+[Arquitetura](#3-arquitetura-da-solução)).
+
+---
+
+## 3. Arquitetura da solução
 
 ```
                           ┌──────────────────────────────────────────┐
@@ -87,7 +182,7 @@ Pontos-chave:
 
 ---
 
-## 3. O que foi alterado no código
+## 4. O que foi alterado no código
 
 | Ficheiro | Alteração |
 |----------|-----------|
@@ -106,7 +201,7 @@ Pontos-chave:
 
 ---
 
-## 4. Pré-requisitos
+## 5. Pré-requisitos
 
 - **Docker** + **Docker Compose** (v2: comando `docker compose`).
 - **uv** (apenas se quiseres correr a app fora do Docker).
@@ -217,6 +312,27 @@ curl -X POST http://localhost:8000/auth/login \
 > As métricas são exportadas a cada ~60s e o Prometheus faz scrape a cada 15s, por
 > isso dá ~1 minuto antes de aparecerem.
 
+### Tráfego contínuo (recomendado) — `scripts/load-test.ps1`
+
+Para ter dados ricos e realistas (vários utilizadores, tickets, comentários,
+filtros, e até 404s de propósito), corre o simulador de carga em **PowerShell**.
+Ele gera tráfego **indefinidamente** até parares com `Ctrl+C`:
+
+```powershell
+# A partir da raiz do projeto, com a API a responder em http://localhost:8000
+./scripts/load-test.ps1
+
+# Mais intenso (menos pausa entre pedidos)
+./scripts/load-test.ps1 -MinDelayMs 50 -MaxDelayMs 200
+
+# Apontar para outra instância
+./scripts/load-test.ps1 -BaseUrl http://localhost:8000
+```
+
+Cada pedido é mostrado com cor por código de status e é impresso um resumo
+periódico (e um resumo final ao parar). Para **mais carga**, abre vários
+terminais e corre o script em cada um.
+
 ---
 
 ## Passo 5 — Ver LOGS no Grafana (Loki)
@@ -288,7 +404,7 @@ E no sentido inverso (trace → logs): num trace aberto no Tempo, usa o botão
 
 ---
 
-## 9. Graceful degradation (correr sem a stack)
+## 10. Graceful degradation (correr sem a stack)
 
 A aplicação **nunca depende** da observabilidade para funcionar.
 
@@ -312,7 +428,7 @@ Isto está implementado em `src/infrastructure/observability.py` (função
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Sintoma | Causa provável / solução |
 |---------|--------------------------|
@@ -335,7 +451,7 @@ docker compose down -v         # parar tudo e APAGAR dados (loki/tempo/prometheu
 
 ---
 
-## 11. Como replicar isto noutro projeto (do zero)
+## 12. Como replicar isto noutro projeto (do zero)
 
 Resumo reproduzível da implementação:
 
@@ -363,6 +479,49 @@ Resumo reproduzível da implementação:
    - `loki-config.yaml`, `tempo.yaml`, `prometheus.yml`,
    - `grafana/datasources.yaml` (datasources + correlação log↔trace).
 8. **Validar** (Passos 2–8 deste documento).
+
+---
+
+## 13. Mapa de alterações detalhado (ficheiros e linhas)
+
+Esta secção lista **todos** os ficheiros tocados pela implementação da
+observabilidade (commit `9f72c5d`), distinguindo **ficheiros novos** de
+**ficheiros modificados** e apontando, nos modificados, as **linhas** onde se
+mexeu. Resumo do commit: **17 ficheiros**, **+1927 / −13 linhas**.
+
+> As linhas indicadas referem-se ao estado **após** o commit. Para ver o diff
+> exato a qualquer momento:
+> ```bash
+> git show 9f72c5d -- <ficheiro>     # diff de um ficheiro
+> git show 9f72c5d --stat            # resumo de todos
+> ```
+
+### 13.1 Ficheiros NOVOS
+
+| Ficheiro | Linhas | Conteúdo |
+|----------|:------:|----------|
+| `src/infrastructure/observability.py` | 168 | Módulo central: `configure_observability(app, engine)` (traces + métricas, instrumentação FastAPI/SQLAlchemy), `add_trace_context` (injeta `trace_id`/`span_id`) e `_is_disabled()` (graceful degradation). |
+| `observability/otel-collector-config.yaml` | 82 | Config do OpenTelemetry Collector: receivers `otlp` + `filelog`; exporters `otlp/tempo`, `prometheus`, `otlphttp/loki`. |
+| `observability/grafana/datasources.yaml` | 59 | Datasources Loki/Tempo/Prometheus + correlação log↔trace (derived fields / `tracesToLogs`). |
+| `observability/loki-config.yaml` | 44 | Config do Loki (armazenamento de logs). |
+| `observability/tempo.yaml` | 33 | Config do Tempo (armazenamento de traces). |
+| `observability/prometheus.yml` | 24 | Config do Prometheus (scrape do collector em `:8889`/`:8888`). |
+| `scripts/load-test.ps1` | 420 | Simulador de carga em PowerShell (tráfego contínuo realista). |
+
+### 13.2 Ficheiros MODIFICADOS
+
+| Ficheiro | Linhas alteradas | O que mudou |
+|----------|------------------|-------------|
+| `src/main.py` | **+151–161** | Bloco `try/except` em `create_app()` que chama `configure_observability(app, engine=engine)` (graceful: ignora se a stack estiver desligada). |
+| `src/infrastructure/logging_config.py` | **+60–62** (import tardio de `add_trace_context`); **+82–83** (processor na pipeline do structlog) | Injeta `trace_id`/`span_id` nos logs. Renumeração dos comentários 3→5. Nada mais mudou na lógica de logs. |
+| `src/api/routes/system_routes.py` | **2–3, 6–7** (imports `JSONResponse`, `text`, `ReadinessResponse`, `engine`); **+29–69** (docstring de `/health`, novos `/health/live` e `/health/ready`) | Adiciona liveness explícito e readiness com `SELECT 1` (200/503). |
+| `src/api/schemas/responses/health_response.py` | **+10–18** | Novo schema `ReadinessResponse` (`status` + `checks: dict[str, str]`); docstrings em `HealthResponse`. |
+| `src/infrastructure/di/dependencies.py` | **30, 32–34** (imports); **43–60** (`get_repository`) | Troca `InMemoryTicketRepository` → `SQLAlchemyTicketRepository` com sessão injetada via `Depends(get_db_session)`. ⚠️ Mudança de persistência incluída no mesmo commit. |
+| `docker-compose.yml` | **+35–36, +52–64, +70–182** (3 hunks) | Env `OTEL_*` no serviço `api` + novos serviços `otel-collector`, `loki`, `tempo`, `prometheus`, `grafana`. |
+| `pyproject.toml` | **+12–16** | 5 dependências `opentelemetry-*` (api, sdk, exporter-otlp-proto-http, instrumentation-fastapi, instrumentation-sqlalchemy). |
+| `.env.example` | **+27–39** | Bloco de variáveis `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`. |
+| `uv.lock` | **+503** | Lockfile regenerado pelo `uv add` (não editar à mão). |
+| `OBSERVABILITY.md` | **novo (374) → atualizado** | Este documento. |
 
 ---
 
