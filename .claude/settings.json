@@ -1,0 +1,40 @@
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "context-mode@context-mode": true,
+    "claude-md-management@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "github@claude-plugins-official": true
+  },
+  "permissions": {
+    "ask": [
+      "Read(.env)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(.env)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Write(.env)",
+      "Write(**/.env)",
+      "Write(**/.env.*)",
+      "Read(**/docker-compose*.yml)",
+      "Edit(**/docker-compose*.yml)",
+      "Write(**/docker-compose*.yml)",
+      "Read(alembic.ini)",
+      "Edit(alembic.ini)",
+      "Read(**/secrets.*)",
+      "Edit(**/secrets.*)",
+      "Write(**/secrets.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.pfx)",
+      "Read(**/*.p12)",
+      "Read(**/*.tfvars)",
+      "Edit(**/*.tfvars)",
+      "Read(**/appsettings*.json)",
+      "Edit(**/appsettings*.json)"
+    ]
+  }
+}

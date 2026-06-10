@@ -12,3 +12,7 @@ wheels/
 .env
 
 logs/
+
+# Claude Code — local machine overrides (do NOT commit machine-specific paths/allows)
+.claude/settings.local.json
+# Keep versioned: .claude/settings.json and .mcp.json (tracked intentionally)
